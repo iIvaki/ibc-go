@@ -29,7 +29,7 @@ func (k *Keeper) CreateChannel(goCtx context.Context, msg *types.MsgCreateChanne
 	k.SetCreator(ctx, channelID, msg.Signer)
 	k.SetNextSequenceSend(ctx, channelID, 1)
 
-	k.EmitCreateChannelEvent(goCtx, channelID)
+	k.emitCreateChannelEvent(goCtx, channelID, msg.ClientId)
 
 	return &types.MsgCreateChannelResponse{ChannelId: channelID}, nil
 }
@@ -37,6 +37,11 @@ func (k *Keeper) CreateChannel(goCtx context.Context, msg *types.MsgCreateChanne
 // RegisterCounterparty defines a rpc handler method for MsgRegisterCounterparty.
 func (k *Keeper) RegisterCounterparty(goCtx context.Context, msg *types.MsgRegisterCounterparty) (*types.MsgRegisterCounterpartyResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	channel, ok := k.GetChannel(ctx, msg.ChannelId)
+	if !ok {
+		return nil, errorsmod.Wrapf(types.ErrChannelNotFound, "channel must exist for channel id %s", msg.ChannelId)
+	}
 
 	creator, found := k.GetCreator(ctx, msg.ChannelId)
 	if !found {
@@ -47,15 +52,12 @@ func (k *Keeper) RegisterCounterparty(goCtx context.Context, msg *types.MsgRegis
 		return nil, errorsmod.Wrapf(ibcerrors.ErrUnauthorized, "channel creator (%s) must match signer (%s)", creator, msg.Signer)
 	}
 
-	channel, ok := k.GetChannel(ctx, msg.ChannelId)
-	if !ok {
-		return nil, errorsmod.Wrapf(types.ErrInvalidChannel, "channel must exist for channel id %s", msg.ChannelId)
-	}
-
 	channel.CounterpartyChannelId = msg.CounterpartyChannelId
 	k.SetChannel(ctx, msg.ChannelId, channel)
 	// Delete client creator from state as it is not needed after this point.
 	k.DeleteCreator(ctx, msg.ChannelId)
+
+	k.emitRegisterCounterpartyEvent(goCtx, msg.ChannelId, channel)
 
 	return &types.MsgRegisterCounterpartyResponse{}, nil
 }

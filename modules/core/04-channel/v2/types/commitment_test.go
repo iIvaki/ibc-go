@@ -35,6 +35,12 @@ func TestCommitPacket(t *testing.T) {
 			},
 		},
 	}
+
+	payloadHash := types.HashPayload(packet.Payloads[0])
+	require.Equal(t, "5a405608ab85eacdd3f6ad429a5d7cbcc0349055f57708311ece1983dd993307", hex.EncodeToString(payloadHash))
+
 	commitment := types.CommitPacket(packet)
-	require.Equal(t, "c75fb6745b83fe67fb01d11cc01de73f9203386cb20f5ae6102080ae07e28a24", hex.EncodeToString(commitment))
+	require.Equal(t, "450194f2ce25b12487f65593e106d91367a1e5c90b2efc03ed78265a54cfcebe", hex.EncodeToString(commitment))
+
+	require.Len(t, commitment, 32)
 }
