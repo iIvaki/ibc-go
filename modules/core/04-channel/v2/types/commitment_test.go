@@ -44,3 +44,19 @@ func TestCommitPacket(t *testing.T) {
 
 	require.Len(t, commitment, 32)
 }
+
+func TestCommitAcknowledgement(t *testing.T) {
+	ack := types.Acknowledgement{
+		AcknowledgementResults: []types.AcknowledgementResult{
+			{
+				AppName: "doesntmatter",
+				RecvPacketResult: types.RecvPacketResult{
+					Status:          0, // doesnt matter
+					Acknowledgement: []byte("some bytes"),
+				},
+			},
+		},
+	}
+	commitment := types.CommitAcknowledgement(ack)
+	require.Equal(t, "f03b4667413e56aaf086663267913e525c442b56fa1af4fa3f3dab9f37044c5b", hex.EncodeToString(commitment))
+}

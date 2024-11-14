@@ -58,6 +58,8 @@ func CommitAcknowledgement(acknowledgement Acknowledgement) []byte {
 		buf = append(buf, hash[:]...)
 	}
 
+	buf = append([]byte{byte(2)}, buf...)
+
 	hash := sha256.Sum256(buf)
-	return append([]byte{byte(2)}, hash[:]...)
+	return hash[:]
 }
