@@ -1,5 +1,6 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response};
+use ethereum::client_state::ClientState;
 use ibc_go_proto::ibc::{
     core::client::v1::Height as IbcProtoHeight,
     lightclients::wasm::v1::ClientState as WasmClientState,
@@ -21,16 +22,19 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    let client_state = WasmClientState {
+    let client_state_bz: Vec<u8> = msg.client_state.into();
+    let client_state = ClientState::from(client_state_bz);
+
+    let wasm_client_state = WasmClientState {
         checksum: msg.checksum.into(),
-        data: msg.client_state.clone().into(),
+        data: client_state.into(),
         latest_height: Some(IbcProtoHeight {
             revision_number: 0,
             revision_height: 1,
         }),
     };
 
-    let client_state_any = Any::from_msg(&client_state).unwrap();
+    let client_state_any = Any::from_msg(&wasm_client_state).unwrap();
 
     deps.storage.set(
         HOST_CLIENT_STATE_KEY.as_bytes(),
@@ -126,12 +130,18 @@ pub fn export_metadata() -> Result<Binary, ContractError> {
 #[cfg(test)]
 mod tests {
     mod instantiate_tests {
+        use alloy_primitives::{aliases::B32, Address, B256, U256};
         use cosmwasm_std::{
             coins,
             testing::{message_info, mock_dependencies, mock_env},
+            Storage,
         };
+        use ethereum::client_state::{ClientState, Fork, ForkParameters};
+        use ibc_go_proto::ibc::lightclients::wasm::v1::ClientState as WasmClientState;
+        use prost::{Message, Name};
+        use tendermint_proto::google::protobuf::Any;
 
-        use crate::{contract::instantiate, msg::InstantiateMsg};
+        use crate::{contract::instantiate, msg::InstantiateMsg, state::HOST_CLIENT_STATE_KEY};
 
         #[test]
         fn test_instantiate() {
@@ -139,14 +149,59 @@ mod tests {
             let creator = deps.api.addr_make("creator");
             let info = message_info(&creator, &coins(1, "uatom"));
 
+            let client_state = ClientState {
+                chain_id: 0,
+                genesis_validators_root: B256::from([0; 32]),
+                min_sync_committee_participants: 0,
+                genesis_time: 0,
+                fork_parameters: ForkParameters {
+                    genesis_fork_version: B32::from([0; 4]),
+                    genesis_slot: 0,
+                    altair: Fork {
+                        version: B32::from([0; 4]),
+                        epoch: 0,
+                    },
+                    bellatrix: Fork {
+                        version: B32::from([0; 4]),
+                        epoch: 0,
+                    },
+                    capella: Fork {
+                        version: B32::from([0; 4]),
+                        epoch: 0,
+                    },
+                    deneb: Fork {
+                        version: B32::from([0; 4]),
+                        epoch: 0,
+                    },
+                },
+                seconds_per_slot: 0,
+                slots_per_epoch: 0,
+                epochs_per_sync_committee_period: 0,
+                latest_slot: 0,
+                ibc_commitment_slot: U256::from(0),
+                ibc_contract_address: Default::default(),
+            };
+            let client_state_bz: Vec<u8> = client_state.into();
+
             let msg = InstantiateMsg {
-                client_state: "does not matter yet".as_bytes().into(),
-                consensus_state: "also does not matter yet".as_bytes().into(),
-                checksum: "yet another that does not matter yet".as_bytes().into(),
+                client_state: client_state_bz.into(),
+                consensus_state: "does not matter yet".as_bytes().into(),
+                checksum: "also does not matter yet".as_bytes().into(),
             };
 
-            let res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+            let res = instantiate(deps.as_mut(), mock_env(), info, msg.clone()).unwrap();
             assert_eq!(0, res.messages.len());
+
+            let wasm_client_state_any_bz =
+                deps.storage.get(HOST_CLIENT_STATE_KEY.as_bytes()).unwrap();
+            let wasm_client_state_any = Any::decode(wasm_client_state_any_bz.as_slice()).unwrap();
+            assert_eq!(WasmClientState::type_url(), wasm_client_state_any.type_url);
+            let client_state =
+                WasmClientState::decode(wasm_client_state_any.value.as_slice()).unwrap();
+            assert_eq!(msg.checksum, client_state.checksum);
+            assert_eq!(msg.client_state, client_state.data);
+            assert_eq!(0, client_state.latest_height.unwrap().revision_number);
+            assert_eq!(1, client_state.latest_height.unwrap().revision_height);
         }
     }
 

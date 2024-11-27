@@ -6,6 +6,7 @@ repository = { workspace = true }
 
 [dependencies]
 ibc-go-proto = { workspace = true }
+ethereum = { workspace = true }
 
 cosmwasm-std = { workspace = true }
 cosmwasm-schema = { workspace = true }
@@ -17,6 +18,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 cw-multi-test = { workspace = true }
+alloy-primitives = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
