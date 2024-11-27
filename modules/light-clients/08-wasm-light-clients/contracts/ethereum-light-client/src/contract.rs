@@ -1,9 +1,12 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response};
 use ethereum::client_state::ClientState;
+use ethereum::consensus_state::ConsensusState;
 use ibc_go_proto::ibc::{
     core::client::v1::Height as IbcProtoHeight,
-    lightclients::wasm::v1::ClientState as WasmClientState,
+    lightclients::wasm::v1::{
+        ClientState as WasmClientState, ConsensusState as WasmConsensusState,
+    },
 };
 use prost::Message;
 use tendermint_proto::google::protobuf::Any;
@@ -24,30 +27,33 @@ pub fn instantiate(
 ) -> Result<Response, ContractError> {
     let client_state_bz: Vec<u8> = msg.client_state.into();
     let client_state = ClientState::from(client_state_bz);
-
     let wasm_client_state = WasmClientState {
         checksum: msg.checksum.into(),
-        data: client_state.into(),
+        data: client_state.clone().into(),
         latest_height: Some(IbcProtoHeight {
             revision_number: 0,
-            revision_height: 1,
+            revision_height: client_state.latest_slot,
         }),
     };
-
-    let client_state_any = Any::from_msg(&wasm_client_state).unwrap();
-
+    let wasm_client_state_any = Any::from_msg(&wasm_client_state).unwrap();
     deps.storage.set(
         HOST_CLIENT_STATE_KEY.as_bytes(),
-        client_state_any.encode_to_vec().as_slice(),
+        wasm_client_state_any.encode_to_vec().as_slice(),
     );
 
+    let consensus_state_bz: Vec<u8> = msg.consensus_state.into();
+    let consensus_state = ConsensusState::from(consensus_state_bz);
+    let wasm_consensus_state = WasmConsensusState {
+        data: consensus_state.clone().into(),
+    };
+    let wasm_consensus_state_any = Any::from_msg(&wasm_consensus_state).unwrap();
     let height = Height {
         revision_number: 0,
-        revision_height: 1,
+        revision_height: consensus_state.slot,
     };
     deps.storage.set(
         consensus_db_key(&height).as_bytes(),
-        msg.consensus_state.as_slice(),
+        wasm_consensus_state_any.encode_to_vec().as_slice(),
     );
 
     Ok(Response::default())
@@ -130,18 +136,27 @@ pub fn export_metadata() -> Result<Binary, ContractError> {
 #[cfg(test)]
 mod tests {
     mod instantiate_tests {
-        use alloy_primitives::{aliases::B32, Address, B256, U256};
+        use alloy_primitives::{aliases::B32, FixedBytes, B256, U256};
         use cosmwasm_std::{
             coins,
             testing::{message_info, mock_dependencies, mock_env},
             Storage,
         };
-        use ethereum::client_state::{ClientState, Fork, ForkParameters};
-        use ibc_go_proto::ibc::lightclients::wasm::v1::ClientState as WasmClientState;
+        use ethereum::{
+            client_state::{ClientState, Fork, ForkParameters},
+            consensus_state::ConsensusState,
+        };
+        use ibc_go_proto::ibc::lightclients::wasm::v1::{
+            ClientState as WasmClientState, ConsensusState as WasmConsensusState,
+        };
         use prost::{Message, Name};
         use tendermint_proto::google::protobuf::Any;
 
-        use crate::{contract::instantiate, msg::InstantiateMsg, state::HOST_CLIENT_STATE_KEY};
+        use crate::{
+            contract::instantiate,
+            msg::{Height, InstantiateMsg},
+            state::{consensus_db_key, HOST_CLIENT_STATE_KEY},
+        };
 
         #[test]
         fn test_instantiate() {
@@ -177,31 +192,72 @@ mod tests {
                 seconds_per_slot: 0,
                 slots_per_epoch: 0,
                 epochs_per_sync_committee_period: 0,
-                latest_slot: 0,
+                latest_slot: 42,
                 ibc_commitment_slot: U256::from(0),
                 ibc_contract_address: Default::default(),
             };
-            let client_state_bz: Vec<u8> = client_state.into();
+            let client_state_bz: Vec<u8> = client_state.clone().into();
+
+            let consensus_state = ConsensusState {
+                slot: 0,
+                state_root: B256::from([0; 32]),
+                storage_root: B256::from([0; 32]),
+                timestamp: 0,
+                current_sync_committee: FixedBytes::<48>::from([0; 48]),
+                next_sync_committee: None,
+            };
+            let consensus_state_bz: Vec<u8> = consensus_state.clone().into();
 
             let msg = InstantiateMsg {
                 client_state: client_state_bz.into(),
-                consensus_state: "does not matter yet".as_bytes().into(),
+                consensus_state: consensus_state_bz.into(),
                 checksum: "also does not matter yet".as_bytes().into(),
             };
 
             let res = instantiate(deps.as_mut(), mock_env(), info, msg.clone()).unwrap();
             assert_eq!(0, res.messages.len());
 
-            let wasm_client_state_any_bz =
+            let actual_wasm_client_state_any_bz =
                 deps.storage.get(HOST_CLIENT_STATE_KEY.as_bytes()).unwrap();
-            let wasm_client_state_any = Any::decode(wasm_client_state_any_bz.as_slice()).unwrap();
-            assert_eq!(WasmClientState::type_url(), wasm_client_state_any.type_url);
-            let client_state =
-                WasmClientState::decode(wasm_client_state_any.value.as_slice()).unwrap();
-            assert_eq!(msg.checksum, client_state.checksum);
-            assert_eq!(msg.client_state, client_state.data);
-            assert_eq!(0, client_state.latest_height.unwrap().revision_number);
-            assert_eq!(1, client_state.latest_height.unwrap().revision_height);
+            let actual_wasm_client_state_any =
+                Any::decode(actual_wasm_client_state_any_bz.as_slice()).unwrap();
+            assert_eq!(
+                WasmClientState::type_url(),
+                actual_wasm_client_state_any.type_url
+            );
+            let actual_client_state =
+                WasmClientState::decode(actual_wasm_client_state_any.value.as_slice()).unwrap();
+            assert_eq!(msg.checksum, actual_client_state.checksum);
+            assert_eq!(msg.client_state, actual_client_state.data);
+            assert_eq!(
+                0,
+                actual_client_state.latest_height.unwrap().revision_number
+            );
+            assert_eq!(
+                client_state.latest_slot,
+                actual_client_state.latest_height.unwrap().revision_height
+            );
+
+            let actual_wasm_consensus_state_any_bz = deps
+                .storage
+                .get(
+                    consensus_db_key(&Height {
+                        revision_number: 0,
+                        revision_height: consensus_state.slot,
+                    })
+                    .as_bytes(),
+                )
+                .unwrap();
+            let actual_wasm_consensus_state_any =
+                Any::decode(actual_wasm_consensus_state_any_bz.as_slice()).unwrap();
+            assert_eq!(
+                WasmConsensusState::type_url(),
+                actual_wasm_consensus_state_any.type_url
+            );
+            let actual_consensus_state =
+                WasmConsensusState::decode(actual_wasm_consensus_state_any.value.as_slice())
+                    .unwrap();
+            assert_eq!(msg.consensus_state, actual_consensus_state.data);
         }
     }
 
