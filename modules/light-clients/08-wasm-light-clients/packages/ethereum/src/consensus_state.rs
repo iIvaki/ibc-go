@@ -1,7 +1,7 @@
 use alloy_primitives::{FixedBytes, B256};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ConsensusState {
     pub slot: u64,
     /// The state root for this chain, used for L2s to verify against this contract.
