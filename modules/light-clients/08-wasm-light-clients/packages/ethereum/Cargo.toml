@@ -7,9 +7,19 @@ repository = { workspace = true }
 [dependencies]
 alloy-primitives = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+alloy-rpc-types-beacon = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-serde = { workspace = true }
 alloy-rlp = { workspace = true }
-serde = { workspace = true }
+ethereum_ssz = { workspace = true }
+ethereum_ssz_derive = { workspace = true }
+tree_hash = { workspace = true }
+tree_hash_derive = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+sha2 = { workspace = true }
+
+# From union (might be removed if they are replaced by something more standard)
+typenum = { workspace = true, features = ["const-generics", "no_std"] }

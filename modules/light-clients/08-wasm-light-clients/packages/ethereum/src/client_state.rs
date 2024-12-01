@@ -1,7 +1,7 @@
 use alloy_primitives::{aliases::B32, Address, B256, U256};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct ClientState {
     pub chain_id: u64,
     pub genesis_validators_root: B256,
@@ -30,7 +30,7 @@ impl From<ClientState> for Vec<u8> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct ForkParameters {
     pub genesis_fork_version: B32,
     pub genesis_slot: u64,
@@ -40,7 +40,7 @@ pub struct ForkParameters {
     pub deneb: Fork,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct Fork {
     pub version: B32,
     pub epoch: u64,

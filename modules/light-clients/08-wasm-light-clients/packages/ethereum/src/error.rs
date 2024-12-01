@@ -14,4 +14,13 @@ pub enum EthereumIBCError {
 
     #[error("verify storage proof error: {0}")]
     VerifyStorageProof(String),
+
+    #[error("insufficient number of sync committee participants ({0})")]
+    InsufficientSyncCommitteeParticipants(usize),
+
+    #[error("update header contains deneb specific information")]
+    MustBeDeneb,
+
+    #[error("invalid chain version")]
+    InvalidChainVersion,
 }

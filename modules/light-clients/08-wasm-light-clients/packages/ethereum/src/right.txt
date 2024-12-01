@@ -1,0 +1,18 @@
+[
+Ident { ident: "parent_hash", span: #0 bytes(169152..169163) }, 
+Ident { ident: "fee_recipient", span: #0 bytes(169179..169192) }, 
+Ident { ident: "state_root", span: #0 bytes(169208..169218) }, 
+Ident { ident: "receipts_root", span: #0 bytes(169234..169247) }, 
+Ident { ident: "logs_bloom", span: #0 bytes(169365..169375) }, 
+Ident { ident: "prev_randao", span: #0 bytes(169422..169433) }, 
+Ident { ident: "block_number", span: #0 bytes(169494..169506) }, 
+Ident { ident: "gas_limit", span: #0 bytes(169566..169575) }, 
+Ident { ident: "gas_used", span: #0 bytes(169635..169643) }, 
+Ident { ident: "timestamp", span: #0 bytes(169703..169712) }, 
+Ident { ident: "extra_data", span: #0 bytes(169828..169838) }, 
+Ident { ident: "base_fee_per_gas", span: #0 bytes(169883..169899) }, 
+Ident { ident: "block_hash", span: #0 bytes(169915..169925) }, 
+Ident { ident: "transactions_root", span: #0 bytes(169963..169980) }, 
+Ident { ident: "withdrawals_root", span: #0 bytes(170018..170034) }, 
+Ident { ident: "blob_gas_used", span: #0 bytes(170159..170172) }, 
+Ident { ident: "excess_blob_gas", span: #0 bytes(170298..170313) }]
