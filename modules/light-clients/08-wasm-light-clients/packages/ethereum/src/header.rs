@@ -142,12 +142,10 @@ impl TreeHash for MyExecutionPayloadBranch {
         let mut hasher = MerkleHasher::with_leaves(floorlog2(EXECUTION_PAYLOAD_INDEX));
 
         for item in &self.0 {
-            //hasher.write(item.tree_hash_root().as_ref()).unwrap()
             hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
         }
 
         let res = hasher.finish().unwrap();
-        println!("res: {:?}", res);
         res
     }
 }
@@ -211,22 +209,15 @@ impl TreeHash for MyBytes {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        println!("len: {}", self.0.len());
         let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-        println!("leaves: {}", leaves);
 
         let mut hasher = MerkleHasher::with_leaves(leaves);
 
         for item in &self.0 {
-            //hasher.write(item.tree_hash_root().as_ref()).unwrap()
             hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
         }
 
-        let hash = hasher.finish().unwrap();
-        println!("hash: {:?}", hash);
-        let res = tree_hash::mix_in_length(&hash, self.0.len());
-        println!("res: {:?}", res);
-        res
+        tree_hash::mix_in_length(&hasher.finish().unwrap(), self.0.len())
     }
 }
 
@@ -246,19 +237,15 @@ impl TreeHash for MyBloom {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        println!("len: {}", self.0.len());
         let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-        println!("leaves: {}", leaves);
 
         let mut hasher = MerkleHasher::with_leaves(leaves);
 
         for item in &self.0 {
-            //hasher.write(item.tree_hash_root().as_ref()).unwrap()
             hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
         }
 
         let res = hasher.finish().unwrap();
-        println!("res: {:?}", res);
         res
     }
 }

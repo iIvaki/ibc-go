@@ -1,3 +1,5 @@
+use alloy_primitives::B256;
+
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum EthereumIBCError {
     #[error("IBC path is empty")]
@@ -23,4 +25,21 @@ pub enum EthereumIBCError {
 
     #[error("invalid chain version")]
     InvalidChainVersion,
+
+    #[error(transparent)]
+    InvalidMerkleBranch(#[from] InvalidMerkleBranch),
+}
+
+#[derive(Debug, PartialEq, Clone, thiserror::Error)]
+#[error("invalid merkle branch \
+    (leaf: {leaf}, branch: [{branch}], \
+    depth: {depth}, index: {index}, root: {root})",
+    branch = .branch.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+)]
+pub struct InvalidMerkleBranch {
+    pub leaf: B256,
+    pub branch: Vec<B256>,
+    pub depth: usize,
+    pub index: u64,
+    pub root: B256,
 }
