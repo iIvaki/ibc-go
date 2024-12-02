@@ -1,7 +1,7 @@
-use alloy_primitives::{aliases::B32, hex, Address, Bloom, Bytes, FixedBytes, B256, U256};
+use alloy_primitives::{aliases::B32, FixedBytes, B256};
 
 use serde::{Deserialize, Serialize};
-use tree_hash::{MerkleHasher, TreeHash, BYTES_PER_CHUNK};
+use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
 use crate::{
@@ -10,61 +10,18 @@ use crate::{
         floorlog2, get_subtree_index, EXECUTION_PAYLOAD_INDEX, FINALIZED_ROOT_INDEX,
         NEXT_SYNC_COMMITTEE_INDEX,
     },
-    consensus_state::ConsensusState,
+    consensus_state::{ConsensusState, TrustedConsensusState},
     error::EthereumIBCError,
     extras::utils::ensure,
     trie::validate_merkle_branch,
+    types::{
+        bls::BlsVerify,
+        domain::DomainType,
+        light_client::{Header, LightClientHeader, LightClientUpdate},
+    },
 };
 
 pub const GENESIS_SLOT: u64 = 0;
-
-/// The Domain Separation Tag for hash_to_point in Ethereum beacon chain BLS12-381 signatures.
-///
-/// This is also the name of the ciphersuite that defines beacon chain BLS signatures.
-///
-/// See:
-/// <https://github.com/ethereum/consensus-specs/blob/ffa95b7b72149960c5aded5c95fb40d64bcab199/specs/phase0/beacon-chain.md#bls-signatures>
-/// <https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-bls-signature-04>
-pub const BLS_DST_SIG: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-
-/// The number of bytes in a BLS12-381 public key.
-pub const BLS_PUBLIC_KEY_BYTES_LEN: usize = 48;
-
-/// The number of bytes in a BLS12-381 secret key.
-pub const BLS_SECRET_KEY_BYTES_LEN: usize = 32;
-
-/// The number of bytes in a BLS12-381 signature.
-pub const BLS_SIGNATURE_BYTES_LEN: usize = 96;
-
-pub type BlsPublicKey = FixedBytes<BLS_PUBLIC_KEY_BYTES_LEN>;
-pub type BlsSignature = FixedBytes<BLS_SIGNATURE_BYTES_LEN>;
-
-pub trait BlsVerify {
-    type Error: std::fmt::Display;
-
-    fn fast_aggregate_verify(
-        &self,
-        public_keys: Vec<&BlsPublicKey>,
-        msg: B256,
-        signature: BlsSignature,
-    ) -> Result<(), Self::Error>;
-}
-
-pub struct DomainType(pub [u8; 4]);
-impl DomainType {
-    pub const BEACON_PROPOSER: Self = Self(hex!("00000000"));
-    pub const BEACON_ATTESTER: Self = Self(hex!("01000000"));
-    pub const RANDAO: Self = Self(hex!("02000000"));
-    pub const DEPOSIT: Self = Self(hex!("03000000"));
-    pub const VOLUNTARY_EXIT: Self = Self(hex!("04000000"));
-    pub const SELECTION_PROOF: Self = Self(hex!("05000000"));
-    pub const AGGREGATE_AND_PROOF: Self = Self(hex!("06000000"));
-    pub const SYNC_COMMITTEE: Self = Self(hex!("07000000"));
-    pub const SYNC_COMMITTEE_SELECTION_PROOF: Self = Self(hex!("08000000"));
-    pub const CONTRIBUTION_AND_PROOF: Self = Self(hex!("09000000"));
-    pub const BLS_TO_EXECUTION_CHANGE: Self = Self(hex!("0A000000"));
-    pub const APPLICATION_MASK: Self = Self(hex!("00000001"));
-}
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct ForkData {
@@ -76,287 +33,6 @@ pub struct ForkData {
 pub struct SigningData {
     pub object_root: B256,
     pub domain: B256,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct Header {
-    pub trusted_sync_committee: TrustedSyncCommittee,
-    pub consensus_update: LightClientUpdate,
-    pub account_update: AccountUpdate,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct AccountUpdate {
-    pub account_proof: AccountProof,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct AccountProof {
-    pub storage_root: B256,
-    pub proof: Vec<Bytes>,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct TrustedSyncCommittee {
-    pub trusted_height: Height,
-    pub sync_committee: ActiveSyncCommittee,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct Height {
-    #[serde(default)]
-    pub revision_number: u64,
-    pub revision_height: u64,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
-pub enum ActiveSyncCommittee {
-    Current(SyncCommittee),
-    Next(SyncCommittee),
-}
-
-impl Default for ActiveSyncCommittee {
-    fn default() -> Self {
-        ActiveSyncCommittee::Current(SyncCommittee {
-            pubkeys: VecBlsPublicKey::default(),
-            aggregate_pubkey: BlsPublicKey::default(),
-        })
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct SyncCommittee {
-    pub pubkeys: VecBlsPublicKey,
-    pub aggregate_pubkey: BlsPublicKey,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct VecBlsPublicKey(pub Vec<BlsPublicKey>);
-
-impl TreeHash for VecBlsPublicKey {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::Vector
-    }
-
-    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
-        unreachable!("Vector should never be packed.")
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("Vector should never be packed.")
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-        let mut hasher = MerkleHasher::with_leaves(leaves);
-
-        for item in &self.0 {
-            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
-        }
-
-        hasher.finish().unwrap()
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct LightClientUpdate {
-    /// Header attested to by the sync committee
-    pub attested_header: LightClientHeader,
-    /// Next sync committee corresponding to `attested_header.state_root`
-    // NOTE: These fields aren't actually optional, they are just because of the current structure of the ethereum Header.
-    // TODO: Remove the Option and improve ethereum::header::Header to be an enum, instead of using optional fields and bools.
-    #[serde(default)]
-    pub next_sync_committee: Option<SyncCommittee>,
-    #[serde(default)]
-    pub next_sync_committee_branch: Option<NextSyncCommitteeBranch>,
-    /// Finalized header corresponding to `attested_header.state_root`
-    pub finalized_header: LightClientHeader,
-    pub finality_branch: FinalityBranch,
-    /// Sync committee aggregate signature
-    pub sync_aggregate: SyncAggregate,
-    /// Slot at which the aggregate signature was created (untrusted)
-    pub signature_slot: u64,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct SyncAggregate {
-    /// The bits representing the sync committee's participation.
-    pub sync_committee_bits: Bytes,
-    /// The aggregated signature of the sync committee.
-    pub sync_committee_signature: BlsSignature,
-}
-
-impl SyncAggregate {
-    // TODO: Unit test
-    /// Returns the number of bits that are set to `true`.
-    #[must_use]
-    pub fn num_sync_committe_participants(&self) -> usize {
-        self.sync_committee_bits
-            .iter()
-            .map(|byte| byte.count_ones() as usize)
-            .sum()
-    }
-}
-
-pub type NextSyncCommitteeBranch = [B256; floorlog2(NEXT_SYNC_COMMITTEE_INDEX)];
-pub type FinalityBranch = [B256; floorlog2(FINALIZED_ROOT_INDEX)];
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct LightClientHeader {
-    pub beacon: BeaconBlockHeader,
-    pub execution: ExecutionPayloadHeader,
-    pub execution_branch: MyExecutionPayloadBranch,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyExecutionPayloadBranch(pub [B256; floorlog2(EXECUTION_PAYLOAD_INDEX)]);
-
-impl TreeHash for MyExecutionPayloadBranch {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::List
-    }
-
-    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-        let mut hasher = MerkleHasher::with_leaves(leaves);
-
-        for item in &self.0 {
-            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
-        }
-
-        hasher.finish().unwrap()
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct BeaconBlockHeader {
-    pub slot: u64,
-    pub proposer_index: u64,
-    pub parent_root: B256,
-    pub state_root: B256,
-    pub body_root: B256,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct ExecutionPayloadHeader {
-    pub parent_hash: B256,
-    pub fee_recipient: Address,
-    pub state_root: B256,
-    pub receipts_root: B256,
-    pub logs_bloom: MyBloom,
-    pub prev_randao: B256,
-    pub block_number: u64,
-    pub gas_limit: u64,
-    pub gas_used: u64,
-    pub timestamp: u64,
-    pub extra_data: MyBytes,
-    pub base_fee_per_gas: U256,
-    pub block_hash: B256,
-    pub transactions_root: B256,
-    pub withdrawals_root: B256,
-    // new in Deneb
-    pub blob_gas_used: u64,
-    // new in Deneb
-    pub excess_blob_gas: u64,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyBytes(pub Bytes);
-
-impl TreeHash for MyBytes {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::List
-    }
-
-    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-
-        let mut hasher = MerkleHasher::with_leaves(leaves);
-
-        for item in &self.0 {
-            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
-        }
-
-        tree_hash::mix_in_length(&hasher.finish().unwrap(), self.0.len())
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyBloom(pub Bloom);
-impl TreeHash for MyBloom {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::List
-    }
-
-    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("List should never be packed.")
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
-
-        let mut hasher = MerkleHasher::with_leaves(leaves);
-
-        for item in &self.0 {
-            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
-        }
-
-        hasher.finish().unwrap()
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct TrustedConsensusState {
-    pub state: ConsensusState,
-    /// Full sync committee data which corresponds to the aggregate key that we
-    /// store at the client.
-    ///
-    /// This sync committee can either be the current sync committee or the next sync
-    /// committee. That's because the verifier uses next or current sync committee's
-    /// public keys to verify the signature against. It is based on
-    pub sync_committee: ActiveSyncCommittee,
-}
-
-impl TrustedConsensusState {
-    fn finalized_slot(&self) -> u64 {
-        self.state.slot
-    }
-
-    fn current_sync_committee(&self) -> Option<&SyncCommittee> {
-        if let ActiveSyncCommittee::Current(committee) = &self.sync_committee {
-            Some(committee)
-        } else {
-            None
-        }
-    }
-
-    fn next_sync_committee(&self) -> Option<&SyncCommittee> {
-        if let ActiveSyncCommittee::Next(committee) = &self.sync_committee {
-            Some(committee)
-        } else {
-            None
-        }
-    }
 }
 
 pub fn verify_header<V: BlsVerify>(
@@ -371,8 +47,7 @@ pub fn verify_header<V: BlsVerify>(
         state: consensus_state.clone(),
         sync_committee: trusted_sync_committee.sync_committee,
     };
-    //let ctx = LightClientContext::new(&wasm_client_state.data, trusted_consensus_state);
-    //
+
     // Ethereum consensus-spec says that we should use the slot at the current timestamp.
     let current_slot = compute_slot_at_timestamp(
         client_state.genesis_time,

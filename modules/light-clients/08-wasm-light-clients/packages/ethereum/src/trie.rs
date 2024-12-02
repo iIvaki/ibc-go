@@ -52,11 +52,12 @@ mod test {
             consts::{floorlog2, get_subtree_index, EXECUTION_PAYLOAD_INDEX},
             MINIMAL,
         },
-        header::{
-            get_lc_execution_root, BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader,
-            MyBloom, MyBytes, MyExecutionPayloadBranch,
-        },
+        header::get_lc_execution_root,
         trie::validate_merkle_branch,
+        types::{
+            light_client::{BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader},
+            wrappers::{MyBloom, MyBytes, MyExecutionPayloadBranch},
+        },
     };
 
     #[test]

@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use cosmwasm_std::{Binary, CustomQuery, Deps, QueryRequest};
 use ethereum::{
     extras::utils::ensure,
-    header::{BlsPublicKey, BlsSignature, BlsVerify},
+    types::bls::{BlsPublicKey, BlsSignature, BlsVerify},
     utils::hex::to_hex,
 };
 use thiserror::Error;
