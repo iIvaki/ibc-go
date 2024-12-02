@@ -1,5 +1,4 @@
-use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
-use alloy_rpc_types_beacon::BlsPublicKey;
+use alloy_primitives::{aliases::B32, hex, Address, Bloom, Bytes, FixedBytes, B256, U256};
 
 use serde::{Deserialize, Serialize};
 use tree_hash::{MerkleHasher, TreeHash, BYTES_PER_CHUNK};
@@ -8,14 +7,76 @@ use tree_hash_derive::TreeHash;
 use crate::{
     client_state::{ClientState, ForkParameters},
     config::consts::{
-        floorlog2, EXECUTION_PAYLOAD_INDEX, FINALIZED_ROOT_INDEX, NEXT_SYNC_COMMITTEE_INDEX,
+        floorlog2, get_subtree_index, EXECUTION_PAYLOAD_INDEX, FINALIZED_ROOT_INDEX,
+        NEXT_SYNC_COMMITTEE_INDEX,
     },
     consensus_state::ConsensusState,
     error::EthereumIBCError,
     extras::utils::ensure,
+    trie::validate_merkle_branch,
 };
 
 pub const GENESIS_SLOT: u64 = 0;
+
+/// The Domain Separation Tag for hash_to_point in Ethereum beacon chain BLS12-381 signatures.
+///
+/// This is also the name of the ciphersuite that defines beacon chain BLS signatures.
+///
+/// See:
+/// <https://github.com/ethereum/consensus-specs/blob/ffa95b7b72149960c5aded5c95fb40d64bcab199/specs/phase0/beacon-chain.md#bls-signatures>
+/// <https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-bls-signature-04>
+pub const BLS_DST_SIG: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
+
+/// The number of bytes in a BLS12-381 public key.
+pub const BLS_PUBLIC_KEY_BYTES_LEN: usize = 48;
+
+/// The number of bytes in a BLS12-381 secret key.
+pub const BLS_SECRET_KEY_BYTES_LEN: usize = 32;
+
+/// The number of bytes in a BLS12-381 signature.
+pub const BLS_SIGNATURE_BYTES_LEN: usize = 96;
+
+pub type BlsPublicKey = FixedBytes<BLS_PUBLIC_KEY_BYTES_LEN>;
+pub type BlsSignature = FixedBytes<BLS_SIGNATURE_BYTES_LEN>;
+
+pub trait BlsVerify {
+    type Error: std::fmt::Display;
+
+    fn fast_aggregate_verify(
+        &self,
+        public_keys: Vec<&BlsPublicKey>,
+        msg: B256,
+        signature: BlsSignature,
+    ) -> Result<(), Self::Error>;
+}
+
+pub struct DomainType(pub [u8; 4]);
+impl DomainType {
+    pub const BEACON_PROPOSER: Self = Self(hex!("00000000"));
+    pub const BEACON_ATTESTER: Self = Self(hex!("01000000"));
+    pub const RANDAO: Self = Self(hex!("02000000"));
+    pub const DEPOSIT: Self = Self(hex!("03000000"));
+    pub const VOLUNTARY_EXIT: Self = Self(hex!("04000000"));
+    pub const SELECTION_PROOF: Self = Self(hex!("05000000"));
+    pub const AGGREGATE_AND_PROOF: Self = Self(hex!("06000000"));
+    pub const SYNC_COMMITTEE: Self = Self(hex!("07000000"));
+    pub const SYNC_COMMITTEE_SELECTION_PROOF: Self = Self(hex!("08000000"));
+    pub const CONTRIBUTION_AND_PROOF: Self = Self(hex!("09000000"));
+    pub const BLS_TO_EXECUTION_CHANGE: Self = Self(hex!("0A000000"));
+    pub const APPLICATION_MASK: Self = Self(hex!("00000001"));
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
+pub struct ForkData {
+    pub current_version: B32,
+    pub genesis_validators_root: B256,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
+pub struct SigningData {
+    pub object_root: B256,
+    pub domain: B256,
+}
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct Header {
@@ -57,18 +118,44 @@ pub enum ActiveSyncCommittee {
 impl Default for ActiveSyncCommittee {
     fn default() -> Self {
         ActiveSyncCommittee::Current(SyncCommittee {
-            pubkeys: Vec::default(),
+            pubkeys: VecBlsPublicKey::default(),
             aggregate_pubkey: BlsPublicKey::default(),
         })
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct SyncCommittee {
-    //#[serde(with = "::serde_utils::hex_string_list")]
-    pub pubkeys: Vec<BlsPublicKey>,
-    //#[serde(with = "::serde_utils::hex_string")]
+    pub pubkeys: VecBlsPublicKey,
     pub aggregate_pubkey: BlsPublicKey,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
+pub struct VecBlsPublicKey(pub Vec<BlsPublicKey>);
+
+impl TreeHash for VecBlsPublicKey {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        tree_hash::TreeHashType::Vector
+    }
+
+    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
+        unreachable!("Vector should never be packed.")
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        unreachable!("Vector should never be packed.")
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
+        let mut hasher = MerkleHasher::with_leaves(leaves);
+
+        for item in &self.0 {
+            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
+        }
+
+        hasher.finish().unwrap()
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
@@ -88,7 +175,6 @@ pub struct LightClientUpdate {
     /// Sync committee aggregate signature
     pub sync_aggregate: SyncAggregate,
     /// Slot at which the aggregate signature was created (untrusted)
-    //#[serde(with = "::serde_utils::string")]
     pub signature_slot: u64,
 }
 
@@ -97,7 +183,7 @@ pub struct SyncAggregate {
     /// The bits representing the sync committee's participation.
     pub sync_committee_bits: Bytes,
     /// The aggregated signature of the sync committee.
-    pub sync_committee_signature: Bytes,
+    pub sync_committee_signature: BlsSignature,
 }
 
 impl SyncAggregate {
@@ -139,14 +225,14 @@ impl TreeHash for MyExecutionPayloadBranch {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let mut hasher = MerkleHasher::with_leaves(floorlog2(EXECUTION_PAYLOAD_INDEX));
+        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
+        let mut hasher = MerkleHasher::with_leaves(leaves);
 
         for item in &self.0 {
             hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
         }
 
-        let res = hasher.finish().unwrap();
-        res
+        hasher.finish().unwrap()
     }
 }
 
@@ -159,17 +245,7 @@ pub struct BeaconBlockHeader {
     pub body_root: B256,
 }
 
-#[derive(
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Clone,
-    Debug,
-    Default,
-    //ssz_derive::Decode,
-    //ssz_derive::Encode,
-    TreeHash,
-)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct ExecutionPayloadHeader {
     pub parent_hash: B256,
     pub fee_recipient: Address,
@@ -245,8 +321,7 @@ impl TreeHash for MyBloom {
             hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
         }
 
-        let res = hasher.finish().unwrap();
-        res
+        hasher.finish().unwrap()
     }
 }
 
@@ -262,34 +337,57 @@ pub struct TrustedConsensusState {
     pub sync_committee: ActiveSyncCommittee,
 }
 
-pub fn verify_header(
-    consensus_state: ConsensusState,
-    client_state: ClientState,
+impl TrustedConsensusState {
+    fn finalized_slot(&self) -> u64 {
+        self.state.slot
+    }
+
+    fn current_sync_committee(&self) -> Option<&SyncCommittee> {
+        if let ActiveSyncCommittee::Current(committee) = &self.sync_committee {
+            Some(committee)
+        } else {
+            None
+        }
+    }
+
+    fn next_sync_committee(&self) -> Option<&SyncCommittee> {
+        if let ActiveSyncCommittee::Next(committee) = &self.sync_committee {
+            Some(committee)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn verify_header<V: BlsVerify>(
+    consensus_state: &ConsensusState,
+    client_state: &ClientState,
     current_timestamp: u64,
-    header: Header,
+    header: &Header,
+    bls_verifier: V,
 ) -> Result<(), EthereumIBCError> {
-    let trusted_sync_committee = header.trusted_sync_committee;
-    let _trusted_consensus_state = TrustedConsensusState {
-        state: consensus_state,
+    let trusted_sync_committee = header.trusted_sync_committee.clone();
+    let trusted_consensus_state = TrustedConsensusState {
+        state: consensus_state.clone(),
         sync_committee: trusted_sync_committee.sync_committee,
     };
     //let ctx = LightClientContext::new(&wasm_client_state.data, trusted_consensus_state);
     //
     // Ethereum consensus-spec says that we should use the slot at the current timestamp.
-    let _current_slot = compute_slot_at_timestamp(
+    let current_slot = compute_slot_at_timestamp(
         client_state.genesis_time,
         client_state.seconds_per_slot,
         current_timestamp,
     )
     .unwrap();
 
-    //validate_light_client_update(
-    //    &ctx,
-    //    header.consensus_update.clone(),
-    //    current_slot,
-    //    client_state.genesis_validators_root,
-    //)
-    //.map_err(Error::ValidateLightClient)?;
+    validate_light_client_update::<V>(
+        client_state,
+        &trusted_consensus_state,
+        &header.consensus_update,
+        current_slot,
+        bls_verifier,
+    )?;
     //
     //// check whether at least 2/3 of the sync committee signed
     //ensure(
@@ -338,6 +436,7 @@ pub fn compute_slot_at_timestamp(
         .checked_add(GENESIS_SLOT)
 }
 
+// TODO: Update comments
 /// Verifies if the light client `update` is valid.
 ///
 /// * `update`: The light client update we want to verify.
@@ -356,200 +455,277 @@ pub fn compute_slot_at_timestamp(
 ///   to be changed or removed.
 ///
 /// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md#validate_light_client_update)
-pub fn validate_light_client_update(
-    _client_state: ClientState,
-    _update: LightClientUpdate,
-    _current_slot: u64,
-    _genesis_validators_root: B256,
+pub fn validate_light_client_update<V: BlsVerify>(
+    client_state: &ClientState,
+    trusted_consensus_state: &TrustedConsensusState,
+    update: &LightClientUpdate,
+    current_slot: u64,
+    bls_verifier: V,
 ) -> Result<(), EthereumIBCError> {
-    //// Verify sync committee has sufficient participants
-    //let sync_aggregate = &update.sync_aggregate;
-    //
-    //ensure(
-    //    sync_aggregate.num_sync_committe_participants()
-    //        >= client_state
-    //            .min_sync_committee_participants
-    //            .try_into()
-    //            .unwrap(),
-    //    EthereumIBCError::InsufficientSyncCommitteeParticipants(
-    //        sync_aggregate.num_sync_committe_participants(),
-    //    ),
-    //)?;
-    //
-    //is_valid_light_client_header(ctx.fork_parameters(), &update.attested_header)?;
-    //
-    //// Verify update does not skip a sync committee period
-    //let update_attested_slot = update.attested_header.beacon.slot;
-    //let update_finalized_slot = update.finalized_header.beacon.slot;
-    //
-    //ensure(
-    //    update_finalized_slot != GENESIS_SLOT,
-    //    Error::FinalizedSlotIsGenesis,
-    //)?;
-    //
-    //ensure(
-    //    current_slot >= update.signature_slot,
-    //    Error::UpdateMoreRecentThanCurrentSlot {
-    //        current_slot,
-    //        update_signature_slot: update.signature_slot,
-    //    },
-    //)?;
-    //
-    //ensure(
-    //    update.signature_slot > update_attested_slot
-    //        && update_attested_slot >= update_finalized_slot,
-    //    Error::InvalidSlots {
-    //        update_signature_slot: update.signature_slot,
-    //        update_attested_slot,
-    //        update_finalized_slot,
-    //    },
-    //)?;
-    //
-    //// Let's say N is the signature period of the header we store, we can only do updates with
-    //// the following settings:
-    //// 1. stored_period = N, signature_period = N:
-    ////     - the light client must have the `current_sync_committee` and use it to verify the new header.
-    //// 2. stored_period = N, signature_period = N + 1:
-    ////     - the light client must have the `next_sync_committee` and use it to verify the new header.
-    //let stored_period =
-    //    compute_sync_committee_period_at_slot::<Ctx::ChainSpec>(ctx.finalized_slot());
-    //let signature_period =
-    //    compute_sync_committee_period_at_slot::<Ctx::ChainSpec>(update.signature_slot);
-    //
-    //if ctx.next_sync_committee().is_some() {
-    //    ensure(
-    //        signature_period == stored_period || signature_period == stored_period + 1,
-    //        Error::InvalidSignaturePeriodWhenNextSyncCommitteeExists {
-    //            signature_period,
-    //            stored_period,
-    //        },
-    //    )?;
-    //} else {
-    //    ensure(
-    //        signature_period == stored_period,
-    //        Error::InvalidSignaturePeriodWhenNextSyncCommitteeDoesNotExist {
-    //            signature_period,
-    //            stored_period,
-    //        },
-    //    )?;
-    //}
-    //
-    //// Verify update is relevant
-    //let update_attested_period =
-    //    compute_sync_committee_period_at_slot::<Ctx::ChainSpec>(update_attested_slot);
-    //
-    //// There are two options to do a light client update:
-    //// 1. We are updating the header with a newer one.
-    //// 2. We haven't set the next sync committee yet and we can use any attested header within the same
-    //// signature period to set the next sync committee. This means that the stored header could be larger.
-    //// The light client implementation needs to take care of it.
-    //ensure(
-    //    update_attested_slot > ctx.finalized_slot()
-    //        || (update_attested_period == stored_period
-    //            && update.next_sync_committee.is_some()
-    //            && ctx.next_sync_committee().is_none()),
-    //    Error::IrrelevantUpdate {
-    //        update_attested_slot,
-    //        trusted_finalized_slot: ctx.finalized_slot(),
-    //        update_attested_period,
-    //        stored_period,
-    //        update_sync_committee_is_set: update.next_sync_committee.is_some(),
-    //        trusted_next_sync_committee_is_set: ctx.next_sync_committee().is_some(),
-    //    },
-    //)?;
-    //
-    //// Verify that the `finality_branch`, if present, confirms `finalized_header`
-    //// to match the finalized checkpoint root saved in the state of `attested_header`.
-    //// NOTE(aeryz): We always expect to get `finalized_header` and it's embedded into the type definition.
-    //is_valid_light_client_header(ctx.fork_parameters(), &update.finalized_header)?;
-    //let finalized_root = update.finalized_header.beacon.tree_hash_root();
-    //
-    //// This confirms that the `finalized_header` is really finalized.
-    //validate_merkle_branch(
-    //    &finalized_root.into(),
-    //    &update.finality_branch,
-    //    floorlog2(FINALIZED_ROOT_INDEX),
-    //    get_subtree_index(FINALIZED_ROOT_INDEX),
-    //    &update.attested_header.beacon.state_root,
-    //)?;
-    //
-    //// Verify that if the update contains the next sync committee, and the signature periods do match,
-    //// next sync committees match too.
-    //if let (Some(next_sync_committee), Some(stored_next_sync_committee)) =
-    //    (&update.next_sync_committee, ctx.next_sync_committee())
-    //{
-    //    if update_attested_period == stored_period {
-    //        ensure(
-    //            next_sync_committee == stored_next_sync_committee,
-    //            Error::NextSyncCommitteeMismatch {
-    //                expected: stored_next_sync_committee.aggregate_pubkey,
-    //                found: next_sync_committee.aggregate_pubkey,
-    //            },
-    //        )?;
-    //    }
-    //    // This validates the given next sync committee against the attested header's state root.
-    //    validate_merkle_branch(
-    //        &next_sync_committee.tree_hash_root().into(),
-    //        &update.next_sync_committee_branch.unwrap_or_default(),
-    //        floorlog2(NEXT_SYNC_COMMITTEE_INDEX),
-    //        get_subtree_index(NEXT_SYNC_COMMITTEE_INDEX),
-    //        &update.attested_header.beacon.state_root,
-    //    )?;
-    //}
-    //
-    //// Verify sync committee aggregate signature
-    //let sync_committee = if signature_period == stored_period {
-    //    ctx.current_sync_committee()
-    //        .ok_or(Error::ExpectedCurrentSyncCommittee)?
-    //} else {
-    //    ctx.next_sync_committee()
-    //        .ok_or(Error::ExpectedNextSyncCommittee)?
-    //};
-    //
-    //// It's not mandatory for all of the members of the sync committee to participate. So we are extracting the
-    //// public keys of the ones who participated.
-    //let participant_pubkeys = update
-    //    .sync_aggregate
-    //    .sync_committee_bits
-    //    .iter()
-    //    .zip(sync_committee.pubkeys.iter())
-    //    .filter_map(|(included, pubkey)| included.then_some(pubkey))
-    //    .collect::<Vec<_>>();
-    //
-    //let fork_version_slot = std::cmp::max(update.signature_slot, 1) - 1;
-    //let fork_version = compute_fork_version(
-    //    ctx.fork_parameters(),
-    //    compute_epoch_at_slot::<Ctx::ChainSpec>(fork_version_slot),
-    //);
-    //
-    //let domain = compute_domain(
-    //    DomainType::SYNC_COMMITTEE,
-    //    Some(fork_version),
-    //    Some(genesis_validators_root),
-    //    ctx.fork_parameters().genesis_fork_version,
-    //);
-    //let signing_root = compute_signing_root(&update.attested_header.beacon, domain);
-    //
-    //bls_verifier.fast_aggregate_verify(
-    //    participant_pubkeys,
-    //    signing_root.as_ref().to_owned(),
-    //    sync_aggregate.sync_committee_signature,
-    //)?;
-    //
+    // Verify sync committee has sufficient participants
+    ensure(
+        update.sync_aggregate.num_sync_committe_participants()
+            >= client_state
+                .min_sync_committee_participants
+                .try_into()
+                .unwrap(),
+        EthereumIBCError::InsufficientSyncCommitteeParticipants(
+            update.sync_aggregate.num_sync_committe_participants(),
+        ),
+    )?;
+
+    is_valid_light_client_header(client_state, &update.attested_header)?;
+
+    // Verify update does not skip a sync committee period
+    let update_attested_slot = update.attested_header.beacon.slot;
+    let update_finalized_slot = update.finalized_header.beacon.slot;
+
+    ensure(
+        update_finalized_slot != GENESIS_SLOT,
+        EthereumIBCError::FinalizedSlotIsGenesis,
+    )?;
+
+    ensure(
+        current_slot >= update.signature_slot,
+        EthereumIBCError::UpdateMoreRecentThanCurrentSlot {
+            current_slot,
+            update_signature_slot: update.signature_slot,
+        },
+    )?;
+
+    ensure(
+        update.signature_slot > update_attested_slot
+            && update_attested_slot >= update_finalized_slot,
+        EthereumIBCError::InvalidSlots {
+            update_signature_slot: update.signature_slot,
+            update_attested_slot,
+            update_finalized_slot,
+        },
+    )?;
+
+    // Let's say N is the signature period of the header we store, we can only do updates with
+    // the following settings:
+    // 1. stored_period = N, signature_period = N:
+    //     - the light client must have the `current_sync_committee` and use it to verify the new header.
+    // 2. stored_period = N, signature_period = N + 1:
+    //     - the light client must have the `next_sync_committee` and use it to verify the new header.
+    let stored_period = compute_sync_committee_period_at_slot(
+        client_state.slots_per_epoch,
+        client_state.epochs_per_sync_committee_period,
+        trusted_consensus_state.finalized_slot(),
+    );
+    let signature_period = compute_sync_committee_period_at_slot(
+        client_state.slots_per_epoch,
+        client_state.epochs_per_sync_committee_period,
+        update.signature_slot,
+    );
+
+    if trusted_consensus_state.next_sync_committee().is_some() {
+        ensure(
+            signature_period == stored_period || signature_period == stored_period + 1,
+            EthereumIBCError::InvalidSignaturePeriodWhenNextSyncCommitteeExists {
+                signature_period,
+                stored_period,
+            },
+        )?;
+    } else {
+        ensure(
+            signature_period == stored_period,
+            EthereumIBCError::InvalidSignaturePeriodWhenNextSyncCommitteeDoesNotExist {
+                signature_period,
+                stored_period,
+            },
+        )?;
+    }
+
+    // Verify update is relevant
+    let update_attested_period = compute_sync_committee_period_at_slot(
+        client_state.slots_per_epoch,
+        client_state.epochs_per_sync_committee_period,
+        update_attested_slot,
+    );
+
+    // There are two options to do a light client update:
+    // 1. We are updating the header with a newer one.
+    // 2. We haven't set the next sync committee yet and we can use any attested header within the same
+    // signature period to set the next sync committee. This means that the stored header could be larger.
+    // The light client implementation needs to take care of it.
+    ensure(
+        update_attested_slot > trusted_consensus_state.finalized_slot()
+            || (update_attested_period == stored_period
+                && update.next_sync_committee.is_some()
+                && trusted_consensus_state.next_sync_committee().is_none()),
+        EthereumIBCError::IrrelevantUpdate {
+            update_attested_slot,
+            trusted_finalized_slot: trusted_consensus_state.finalized_slot(),
+            update_attested_period,
+            stored_period,
+            update_sync_committee_is_set: update.next_sync_committee.is_some(),
+            trusted_next_sync_committee_is_set: trusted_consensus_state
+                .next_sync_committee()
+                .is_some(),
+        },
+    )?;
+
+    // Verify that the `finality_branch`, if present, confirms `finalized_header`
+    // to match the finalized checkpoint root saved in the state of `attested_header`.
+    // NOTE(aeryz): We always expect to get `finalized_header` and it's embedded into the type definition.
+    is_valid_light_client_header(client_state, &update.finalized_header)?;
+    let finalized_root = update.finalized_header.beacon.tree_hash_root();
+
+    // This confirms that the `finalized_header` is really finalized.
+    validate_merkle_branch(
+        finalized_root,
+        update.finality_branch.into(),
+        floorlog2(FINALIZED_ROOT_INDEX),
+        get_subtree_index(FINALIZED_ROOT_INDEX),
+        update.attested_header.beacon.state_root,
+    )?;
+
+    // Verify that if the update contains the next sync committee, and the signature periods do match,
+    // next sync committees match too.
+    if let (Some(next_sync_committee), Some(stored_next_sync_committee)) = (
+        &update.next_sync_committee,
+        trusted_consensus_state.next_sync_committee(),
+    ) {
+        if update_attested_period == stored_period {
+            ensure(
+                next_sync_committee == stored_next_sync_committee,
+                EthereumIBCError::NextSyncCommitteeMismatch {
+                    expected: stored_next_sync_committee.aggregate_pubkey,
+                    found: next_sync_committee.aggregate_pubkey,
+                },
+            )?;
+        }
+        // This validates the given next sync committee against the attested header's state root.
+        validate_merkle_branch(
+            next_sync_committee.tree_hash_root(),
+            update.next_sync_committee_branch.unwrap_or_default().into(),
+            floorlog2(NEXT_SYNC_COMMITTEE_INDEX),
+            get_subtree_index(NEXT_SYNC_COMMITTEE_INDEX),
+            update.attested_header.beacon.state_root,
+        )?;
+    }
+
+    // Verify sync committee aggregate signature
+    let sync_committee = if signature_period == stored_period {
+        trusted_consensus_state
+            .current_sync_committee()
+            .ok_or(EthereumIBCError::ExpectedCurrentSyncCommittee)?
+    } else {
+        trusted_consensus_state
+            .next_sync_committee()
+            .ok_or(EthereumIBCError::ExpectedNextSyncCommittee)?
+    };
+
+    // It's not mandatory for all of the members of the sync committee to participate. So we are extracting the
+    // public keys of the ones who participated.
+    let participant_pubkeys = update
+        .sync_aggregate
+        .sync_committee_bits
+        .iter()
+        .flat_map(|byte| (0..8).rev().map(move |i| (byte & (1 << i)) != 0))
+        .zip(sync_committee.pubkeys.0.iter())
+        .filter_map(|(included, pubkey)| included.then_some(pubkey))
+        .collect::<Vec<_>>();
+
+    let fork_version_slot = std::cmp::max(update.signature_slot, 1) - 1;
+    let fork_version = compute_fork_version(
+        &client_state.fork_parameters,
+        compute_epoch_at_slot(client_state.slots_per_epoch, fork_version_slot),
+    );
+
+    let domain = compute_domain(
+        DomainType::SYNC_COMMITTEE,
+        Some(fork_version),
+        Some(client_state.genesis_validators_root),
+        client_state.fork_parameters.genesis_fork_version,
+    );
+    let signing_root = compute_signing_root(&update.attested_header.beacon, domain);
+
+    bls_verifier
+        .fast_aggregate_verify(
+            participant_pubkeys,
+            signing_root,
+            update.sync_aggregate.sync_committee_signature,
+        )
+        .map_err(|err| EthereumIBCError::FastAggregateVerify(err.to_string()))?;
+
     Ok(())
+}
+
+/// Return the signing root for the corresponding signing data
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_signing_root)
+pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: B256) -> B256 {
+    SigningData {
+        object_root: ssz_object.tree_hash_root(),
+        domain,
+    }
+    .tree_hash_root()
+}
+
+/// Return the domain for the `domain_type` and `fork_version`.
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_domain)
+pub fn compute_domain(
+    domain_type: DomainType,
+    fork_version: Option<B32>,
+    genesis_validators_root: Option<B256>,
+    genesis_fork_version: B32,
+) -> B256 {
+    let fork_version = fork_version.unwrap_or(genesis_fork_version);
+    let genesis_validators_root = genesis_validators_root.unwrap_or_default();
+    let fork_data_root = compute_fork_data_root(fork_version, genesis_validators_root);
+
+    let mut domain = [0; 32];
+    domain[..4].copy_from_slice(&domain_type.0);
+    domain[4..].copy_from_slice(&fork_data_root[..28]);
+
+    FixedBytes(domain)
+}
+
+/// Return the 32-byte fork data root for the `current_version` and `genesis_validators_root`.
+/// This is used primarily in signature domains to avoid collisions across forks/chains.
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_fork_data_root)
+pub fn compute_fork_data_root(current_version: B32, genesis_validators_root: B256) -> B256 {
+    let fork_data = ForkData {
+        current_version,
+        genesis_validators_root,
+    };
+
+    fork_data.tree_hash_root()
+}
+
+/// Returns the fork version based on the `epoch` and `fork_parameters`.
+/// NOTE: This implementation is based on capella.
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/capella/fork.md#modified-compute_fork_version)
+pub fn compute_fork_version(fork_parameters: &ForkParameters, epoch: u64) -> B32 {
+    if epoch >= fork_parameters.deneb.epoch {
+        fork_parameters.deneb.version
+    } else if epoch >= fork_parameters.capella.epoch {
+        fork_parameters.capella.version
+    } else if epoch >= fork_parameters.bellatrix.epoch {
+        fork_parameters.bellatrix.version
+    } else if epoch >= fork_parameters.altair.epoch {
+        fork_parameters.altair.version
+    } else {
+        fork_parameters.genesis_fork_version
+    }
 }
 
 /// Validates a light client header.
 ///
 /// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/deneb/light-client/sync-protocol.md#modified-is_valid_light_client_header)
 pub fn is_valid_light_client_header(
-    client_state: ClientState,
-    fork_parameters: ForkParameters,
-    header: LightClientHeader,
+    client_state: &ClientState,
+    header: &LightClientHeader,
 ) -> Result<(), EthereumIBCError> {
     let epoch = compute_epoch_at_slot(client_state.slots_per_epoch, header.beacon.slot);
 
-    if epoch < fork_parameters.deneb.epoch {
+    if epoch < client_state.fork_parameters.deneb.epoch {
         ensure(
             header.execution.blob_gas_used == 0 && header.execution.excess_blob_gas == 0,
             EthereumIBCError::MustBeDeneb,
@@ -557,33 +733,29 @@ pub fn is_valid_light_client_header(
     }
 
     ensure(
-        epoch >= fork_parameters.capella.epoch,
+        epoch >= client_state.fork_parameters.capella.epoch,
         EthereumIBCError::InvalidChainVersion,
     )?;
 
-    //validate_merkle_branch(
-    //    &get_lc_execution_root(fork_parameters, header),
-    //    &header.execution_branch,
-    //    floorlog2(EXECUTION_PAYLOAD_INDEX),
-    //    get_subtree_index(EXECUTION_PAYLOAD_INDEX),
-    //    &header.beacon.body_root,
-    //)
-    Ok(())
+    validate_merkle_branch(
+        get_lc_execution_root(client_state, header),
+        header.execution_branch.0.into(),
+        floorlog2(EXECUTION_PAYLOAD_INDEX),
+        get_subtree_index(EXECUTION_PAYLOAD_INDEX),
+        header.beacon.body_root,
+    )
 }
 
-pub fn validate_merkle_branch(_leaf: B256) -> Result<(), EthereumIBCError> {
-    //let mut root = leaf;
-    //for (i, sibling) in siblings.iter().enumerate() {
-    //    let index = get_subtree_index(i + 1);
-    //    root = if index % 2 == 0 {
-    //        hash_nodes(sibling, &root)
-    //    } else {
-    //        hash_nodes(&root, sibling)
-    //    };
-    //}
-    //
-    //ensure(root == root_hash, Error::InvalidMerkleBranch { root_hash, root })
-    Ok(())
+pub fn get_lc_execution_root(client_state: &ClientState, header: &LightClientHeader) -> B256 {
+    let epoch = compute_epoch_at_slot(client_state.slots_per_epoch, header.beacon.slot);
+
+    ensure(
+        epoch >= client_state.fork_parameters.deneb.epoch,
+        "only deneb or higher epochs are supported",
+    )
+    .unwrap();
+
+    header.execution.tree_hash_root()
 }
 
 /// Returns the epoch at a given `slot`.
@@ -591,6 +763,27 @@ pub fn validate_merkle_branch(_leaf: B256) -> Result<(), EthereumIBCError> {
 /// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_epoch_at_slot)
 pub fn compute_epoch_at_slot(slots_per_epoch: u64, slot: u64) -> u64 {
     slot / slots_per_epoch
+}
+
+/// Returns the sync committee period at a given `slot`.
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md#compute_sync_committee_period_at_slot)
+pub fn compute_sync_committee_period_at_slot(
+    slots_per_epoch: u64,
+    epochs_per_sync_committee_period: u64,
+    slot: u64,
+) -> u64 {
+    compute_sync_committee_period(
+        epochs_per_sync_committee_period,
+        compute_epoch_at_slot(slots_per_epoch, slot),
+    )
+}
+
+/// Returns the sync committee period at a given `epoch`.
+///
+/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/validator.md#sync-committee)
+pub fn compute_sync_committee_period(epochs_per_sync_committee_period: u64, epoch: u64) -> u64 {
+    epoch / epochs_per_sync_committee_period
 }
 
 #[cfg(test)]

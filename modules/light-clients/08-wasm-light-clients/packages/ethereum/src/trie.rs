@@ -1,32 +1,10 @@
 use alloy_primitives::B256;
 use sha2::{Digest, Sha256};
-use tree_hash::TreeHash;
 
-use crate::{
-    client_state::{ClientState, ForkParameters},
-    error::{EthereumIBCError, InvalidMerkleBranch},
-    extras::utils::ensure,
-    header::{compute_epoch_at_slot, LightClientHeader},
-};
-
-pub fn get_lc_execution_root(
-    client_state: ClientState,
-    fork_parameters: &ForkParameters,
-    header: &LightClientHeader,
-) -> B256 {
-    let epoch = compute_epoch_at_slot(client_state.slots_per_epoch, header.beacon.slot);
-
-    ensure(
-        epoch >= fork_parameters.deneb.epoch,
-        "only deneb or higher epochs are supported",
-    )
-    .unwrap();
-
-    header.execution.tree_hash_root()
-}
+use crate::error::{EthereumIBCError, InvalidMerkleBranch};
 
 // https://github.com/ethereum/consensus-specs/blob/efb554f4c4848f8bfc260fcf3ff4b806971716f6/specs/phase0/beacon-chain.md#is_valid_merkle_branch
-pub fn is_valid_merkle_branch(
+pub fn validate_merkle_branch(
     leaf: B256,
     branch: Vec<B256>,
     depth: usize,
@@ -75,14 +53,14 @@ mod test {
             MINIMAL,
         },
         header::{
-            BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader, MyBloom, MyBytes,
-            MyExecutionPayloadBranch,
+            get_lc_execution_root, BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader,
+            MyBloom, MyBytes, MyExecutionPayloadBranch,
         },
-        trie::{get_lc_execution_root, is_valid_merkle_branch},
+        trie::validate_merkle_branch,
     };
 
     #[test]
-    fn test_validate_merkle_branch_with_storage_proof() {
+    fn test_validate_merkle_branch_with_execution_payload() {
         let header = LightClientHeader {
             beacon: BeaconBlockHeader {
                 slot: 10000,
@@ -132,15 +110,14 @@ mod test {
                     .unwrap(),
             ]),
         };
-        let fork_parameters = &MINIMAL.fork_parameters;
 
         // inputs
         let leaf = get_lc_execution_root(
-            ClientState {
+            &ClientState {
                 slots_per_epoch: 32,
+                fork_parameters: MINIMAL.fork_parameters,
                 ..Default::default()
             },
-            fork_parameters,
             &header,
         );
         let depth = floorlog2(EXECUTION_PAYLOAD_INDEX);
@@ -153,6 +130,6 @@ mod test {
         println!("Index: {:?}", index);
         println!("Root: {:?}", root);
 
-        is_valid_merkle_branch(leaf, header.execution_branch.0.into(), depth, index, root).unwrap();
+        validate_merkle_branch(leaf, header.execution_branch.0.into(), depth, index, root).unwrap();
     }
 }
