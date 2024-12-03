@@ -1,11 +1,8 @@
 use alloy_primitives::B256;
 use cosmwasm_std::{Binary, CustomQuery, Deps, QueryRequest};
-use ethereum::{
-    extras::utils::ensure,
-    types::bls::{BlsPublicKey, BlsSignature, BlsVerify},
-    utils::hex::to_hex,
-};
+use ethereum::types::bls::{BlsPublicKey, BlsSignature, BlsVerify};
 use thiserror::Error;
+use utils::{ensure::ensure, hex::to_hex};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]

@@ -20,6 +20,8 @@ optimize = """docker run --rm -v "$(pwd)":/code \
 # Local packages
 ibc-go-proto = { path = "packages/ibc-go-proto" }
 ethereum = { path = "packages/ethereum" }
+ethereum-trie-db = { path = "packages/ethereum-trie-db" }
+utils = { path = "packages/utils" }
 
 # CosmWasm related dependencies
 cosmwasm-schema = "2.1"
@@ -42,6 +44,15 @@ ethereum_ssz_derive = "0.8" # Maintained by Sigma Prime for use in Lighthouse (a
 tree_hash = "0.8" # Maintained by Sigma Prime for use in Lighthouse (and the broader Ethereum ecosystem)
 tree_hash_derive = "0.8" # Maintained by Sigma Prime for use in Lighthouse (and the broader Ethereum ecosystem)
 sha2 = { version = "0.10", default-features = false }
+sha3 = { version = "0.8", default-features = false }
+
+trie-db = "0.29" # Maintined by Parity Tech
+hash-db = "0.16" # Maintined by Parity Tech
+memory-db = "0.32" # Maintined by Parity Tech
+hash256-std-hasher = "0.15" # Maintined by Parity Tech
+rlp = "0.6" # Maintined by Parity Tech
+rlp-derive = "0.2" # Maintined by Parity Tech
+primitive-types = { version = "0.13", default-features = false, features = ["rlp"] } # Maintined by Parity Tech
 
 
 # From union (might be removed if they are replaced by something more standard)

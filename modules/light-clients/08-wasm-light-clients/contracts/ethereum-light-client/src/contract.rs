@@ -143,8 +143,9 @@ mod tests {
             Storage,
         };
         use ethereum::{
-            client_state::{ClientState, Fork, ForkParameters},
+            client_state::ClientState,
             consensus_state::ConsensusState,
+            types::{fork::Fork, fork_parameters::ForkParameters, wrappers::Version},
         };
         use ibc_go_proto::ibc::lightclients::wasm::v1::{
             ClientState as WasmClientState, ConsensusState as WasmConsensusState,
@@ -170,22 +171,22 @@ mod tests {
                 min_sync_committee_participants: 0,
                 genesis_time: 0,
                 fork_parameters: ForkParameters {
-                    genesis_fork_version: B32::from([0; 4]),
+                    genesis_fork_version: Version(B32::from([0; 4])),
                     genesis_slot: 0,
                     altair: Fork {
-                        version: B32::from([0; 4]),
+                        version: Version(B32::from([0; 4])),
                         epoch: 0,
                     },
                     bellatrix: Fork {
-                        version: B32::from([0; 4]),
+                        version: Version(B32::from([0; 4])),
                         epoch: 0,
                     },
                     capella: Fork {
-                        version: B32::from([0; 4]),
+                        version: Version(B32::from([0; 4])),
                         epoch: 0,
                     },
                     deneb: Fork {
-                        version: B32::from([0; 4]),
+                        version: Version(B32::from([0; 4])),
                         epoch: 0,
                     },
                 },

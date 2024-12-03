@@ -1,5 +1,7 @@
-use alloy_primitives::{aliases::B32, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
+
+use crate::types::fork_parameters::ForkParameters;
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct ClientState {
@@ -28,20 +30,4 @@ impl From<ClientState> for Vec<u8> {
     fn from(value: ClientState) -> Self {
         serde_json::to_vec(&value).unwrap()
     }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct ForkParameters {
-    pub genesis_fork_version: B32,
-    pub genesis_slot: u64,
-    pub altair: Fork,
-    pub bellatrix: Fork,
-    pub capella: Fork,
-    pub deneb: Fork,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct Fork {
-    pub version: B32,
-    pub epoch: u64,
 }

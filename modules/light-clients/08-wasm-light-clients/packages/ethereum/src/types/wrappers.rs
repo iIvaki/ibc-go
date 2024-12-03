@@ -1,10 +1,31 @@
-use alloy_primitives::{Bloom, Bytes, B256};
+use alloy_primitives::{aliases::B32, Bloom, Bytes, FixedBytes, B256};
 use serde::{Deserialize, Serialize};
 use tree_hash::{MerkleHasher, TreeHash, BYTES_PER_CHUNK};
 
 use crate::config::consts::{floorlog2, EXECUTION_PAYLOAD_INDEX};
 
 use super::bls::BlsPublicKey;
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
+pub struct Version(pub B32);
+
+impl TreeHash for Version {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        FixedBytes::tree_hash_type()
+    }
+
+    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
+        self.0.tree_hash_packed_encoding()
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        FixedBytes::tree_hash_packing_factor()
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        self.0.tree_hash_root()
+    }
+}
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct MyBytes(pub Bytes);

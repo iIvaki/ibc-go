@@ -2,14 +2,12 @@ use alloy_primitives::{keccak256, Keccak256, U256};
 use alloy_rlp::encode_fixed_size;
 use alloy_rpc_types_eth::EIP1186StorageProof;
 use alloy_trie::{proof::verify_proof, Nibbles};
+use utils::hex::to_hex;
 
-use crate::{
-    client_state::ClientState, consensus_state::ConsensusState, error::EthereumIBCError,
-    utils::hex::to_hex,
-};
+use crate::{client_state::ClientState, consensus_state::ConsensusState, error::EthereumIBCError};
 
 pub fn verify_membership(
-    consensus_state: ConsensusState,
+    trusted_consensus_state: ConsensusState,
     client_state: ClientState,
     proof: Vec<u8>,
     path: Vec<Vec<u8>>,
@@ -38,7 +36,7 @@ pub fn verify_membership(
     }
 
     verify_proof(
-        consensus_state.storage_root,
+        trusted_consensus_state.storage_root,
         Nibbles::unpack(keccak256(key)),
         value,
         eip1186_storage_proof.proof.iter(),
@@ -80,14 +78,13 @@ fn ibc_commitment_key_v2(path: Vec<u8>, slot: U256) -> U256 {
 mod test {
     use std::str::FromStr;
 
-    use crate::{
-        client_state::ClientState, consensus_state::ConsensusState, utils::hex::FromBeHex,
-    };
+    use crate::{client_state::ClientState, consensus_state::ConsensusState};
     use alloy_primitives::{
         hex::{self, FromHex},
         Bytes, B256, U256,
     };
     use alloy_rpc_types_eth::EIP1186StorageProof;
+    use utils::hex::FromBeHex;
 
     use super::verify_membership;
 

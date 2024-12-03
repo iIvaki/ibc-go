@@ -5,8 +5,7 @@ use tree_hash_derive::TreeHash;
 use crate::config::consts::{floorlog2, FINALIZED_ROOT_INDEX, NEXT_SYNC_COMMITTEE_INDEX};
 
 use super::{
-    bls::BlsSignature,
-    sync_committee::{SyncCommittee, TrustedSyncCommittee},
+    sync_committee::{SyncAggregate, SyncCommittee, TrustedSyncCommittee},
     wrappers::{MyBloom, MyBytes, MyExecutionPayloadBranch},
 };
 
@@ -65,26 +64,6 @@ pub struct BeaconBlockHeader {
     pub parent_root: B256,
     pub state_root: B256,
     pub body_root: B256,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct SyncAggregate {
-    /// The bits representing the sync committee's participation.
-    pub sync_committee_bits: Bytes,
-    /// The aggregated signature of the sync committee.
-    pub sync_committee_signature: BlsSignature,
-}
-
-impl SyncAggregate {
-    // TODO: Unit test
-    /// Returns the number of bits that are set to `true`.
-    #[must_use]
-    pub fn num_sync_committe_participants(&self) -> usize {
-        self.sync_committee_bits
-            .iter()
-            .map(|byte| byte.count_ones() as usize)
-            .sum()
-    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]

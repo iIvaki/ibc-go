@@ -2,7 +2,6 @@ use alloy_primitives::B256;
 use sha2::{Digest, Sha256};
 
 use crate::error::{EthereumIBCError, InvalidMerkleBranch};
-
 // https://github.com/ethereum/consensus-specs/blob/efb554f4c4848f8bfc260fcf3ff4b806971716f6/specs/phase0/beacon-chain.md#is_valid_merkle_branch
 pub fn validate_merkle_branch(
     leaf: B256,
@@ -52,12 +51,12 @@ mod test {
             consts::{floorlog2, get_subtree_index, EXECUTION_PAYLOAD_INDEX},
             MINIMAL,
         },
-        header::get_lc_execution_root,
         trie::validate_merkle_branch,
         types::{
             light_client::{BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader},
             wrappers::{MyBloom, MyBytes, MyExecutionPayloadBranch},
         },
+        verify::get_lc_execution_root,
     };
 
     #[test]

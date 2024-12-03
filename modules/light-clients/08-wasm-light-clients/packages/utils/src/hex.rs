@@ -29,7 +29,7 @@ impl FromBeHex for U256 {
 mod test {
     use alloy_primitives::{hex::FromHex, B256, U256};
 
-    use crate::utils::hex::FromBeHex;
+    use super::FromBeHex;
 
     #[test]
     // This is primarily to document how to convert the alloy primitives to and from hex

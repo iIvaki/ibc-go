@@ -1,39 +1,30 @@
-use alloy_primitives::{aliases::B32, FixedBytes, B256};
+use alloy_primitives::B256;
 
-use serde::{Deserialize, Serialize};
+use ethereum_trie_db::trie_db::verify_account_storage_root;
 use tree_hash::TreeHash;
-use tree_hash_derive::TreeHash;
+use utils::{
+    ensure::ensure,
+    slot::{compute_epoch_at_slot, compute_slot_at_timestamp, GENESIS_SLOT},
+};
 
 use crate::{
-    client_state::{ClientState, ForkParameters},
+    client_state::ClientState,
     config::consts::{
         floorlog2, get_subtree_index, EXECUTION_PAYLOAD_INDEX, FINALIZED_ROOT_INDEX,
         NEXT_SYNC_COMMITTEE_INDEX,
     },
     consensus_state::{ConsensusState, TrustedConsensusState},
     error::EthereumIBCError,
-    extras::utils::ensure,
     trie::validate_merkle_branch,
     types::{
         bls::BlsVerify,
-        domain::DomainType,
+        domain::{compute_domain, DomainType},
+        fork_parameters::compute_fork_version,
         light_client::{Header, LightClientHeader, LightClientUpdate},
+        signing_data::compute_signing_root,
+        sync_committee::compute_sync_committee_period_at_slot,
     },
 };
-
-pub const GENESIS_SLOT: u64 = 0;
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct ForkData {
-    pub current_version: B32,
-    pub genesis_validators_root: B256,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
-pub struct SigningData {
-    pub object_root: B256,
-    pub domain: B256,
-}
 
 pub fn verify_header<V: BlsVerify>(
     consensus_state: &ConsensusState,
@@ -63,52 +54,25 @@ pub fn verify_header<V: BlsVerify>(
         current_slot,
         bls_verifier,
     )?;
-    //
-    //// check whether at least 2/3 of the sync committee signed
-    //ensure(
-    //    validate_signature_supermajority::<Config>(
-    //        &header.consensus_update.sync_aggregate.sync_committee_bits,
-    //    ),
-    //    Error::NotEnoughSignatures,
-    //)?;
-    //
-    //let proof_data = header.account_update.account_proof;
-    //
-    //verify_account_storage_root(
-    //    header.consensus_update.attested_header.execution.state_root,
-    //    &wasm_client_state.data.ibc_contract_address,
-    //    &proof_data.proof,
-    //    &proof_data.storage_root,
-    //)
-    //.map_err(|err| {
-    //    Error::TestVerifyStorageProof(
-    //        err,
-    //        to_hex(
-    //            &header
-    //                .consensus_update
-    //                .attested_header
-    //                .execution
-    //                .state_root
-    //                .into_bytes(),
-    //        ),
-    //        to_hex(&wasm_client_state.data.ibc_contract_address.into_bytes()),
-    //        to_hex(&proof_data.proof.first().unwrap()),
-    //        to_hex(&proof_data.storage_root.into_bytes()),
-    //    )
-    //});
 
-    Ok(())
-}
+    // check whether at least 2/3 of the sync committee signed
+    ensure(
+        header
+            .consensus_update
+            .sync_aggregate
+            .validate_signature_supermajority(),
+        EthereumIBCError::NotEnoughSignatures,
+    )?;
 
-pub fn compute_slot_at_timestamp(
-    genesis_time: u64,
-    seconds_per_slot: u64,
-    timestamp_seconds: u64,
-) -> Option<u64> {
-    timestamp_seconds
-        .checked_sub(genesis_time)?
-        .checked_div(seconds_per_slot)?
-        .checked_add(GENESIS_SLOT)
+    let proof_data = header.account_update.account_proof.clone();
+
+    verify_account_storage_root(
+        header.consensus_update.attested_header.execution.state_root,
+        client_state.ibc_contract_address,
+        &proof_data.proof,
+        proof_data.storage_root,
+    )
+    .map_err(EthereumIBCError::TestVerifyStorageProof)
 }
 
 // TODO: Update comments
@@ -314,7 +278,7 @@ pub fn validate_light_client_update<V: BlsVerify>(
         DomainType::SYNC_COMMITTEE,
         Some(fork_version),
         Some(client_state.genesis_validators_root),
-        client_state.fork_parameters.genesis_fork_version,
+        client_state.fork_parameters.genesis_fork_version.clone(),
     );
     let signing_root = compute_signing_root(&update.attested_header.beacon, domain);
 
@@ -327,68 +291,6 @@ pub fn validate_light_client_update<V: BlsVerify>(
         .map_err(|err| EthereumIBCError::FastAggregateVerify(err.to_string()))?;
 
     Ok(())
-}
-
-/// Return the signing root for the corresponding signing data
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_signing_root)
-pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: B256) -> B256 {
-    SigningData {
-        object_root: ssz_object.tree_hash_root(),
-        domain,
-    }
-    .tree_hash_root()
-}
-
-/// Return the domain for the `domain_type` and `fork_version`.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_domain)
-pub fn compute_domain(
-    domain_type: DomainType,
-    fork_version: Option<B32>,
-    genesis_validators_root: Option<B256>,
-    genesis_fork_version: B32,
-) -> B256 {
-    let fork_version = fork_version.unwrap_or(genesis_fork_version);
-    let genesis_validators_root = genesis_validators_root.unwrap_or_default();
-    let fork_data_root = compute_fork_data_root(fork_version, genesis_validators_root);
-
-    let mut domain = [0; 32];
-    domain[..4].copy_from_slice(&domain_type.0);
-    domain[4..].copy_from_slice(&fork_data_root[..28]);
-
-    FixedBytes(domain)
-}
-
-/// Return the 32-byte fork data root for the `current_version` and `genesis_validators_root`.
-/// This is used primarily in signature domains to avoid collisions across forks/chains.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_fork_data_root)
-pub fn compute_fork_data_root(current_version: B32, genesis_validators_root: B256) -> B256 {
-    let fork_data = ForkData {
-        current_version,
-        genesis_validators_root,
-    };
-
-    fork_data.tree_hash_root()
-}
-
-/// Returns the fork version based on the `epoch` and `fork_parameters`.
-/// NOTE: This implementation is based on capella.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/capella/fork.md#modified-compute_fork_version)
-pub fn compute_fork_version(fork_parameters: &ForkParameters, epoch: u64) -> B32 {
-    if epoch >= fork_parameters.deneb.epoch {
-        fork_parameters.deneb.version
-    } else if epoch >= fork_parameters.capella.epoch {
-        fork_parameters.capella.version
-    } else if epoch >= fork_parameters.bellatrix.epoch {
-        fork_parameters.bellatrix.version
-    } else if epoch >= fork_parameters.altair.epoch {
-        fork_parameters.altair.version
-    } else {
-        fork_parameters.genesis_fork_version
-    }
 }
 
 /// Validates a light client header.
@@ -431,45 +333,4 @@ pub fn get_lc_execution_root(client_state: &ClientState, header: &LightClientHea
     .unwrap();
 
     header.execution.tree_hash_root()
-}
-
-/// Returns the epoch at a given `slot`.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_epoch_at_slot)
-pub fn compute_epoch_at_slot(slots_per_epoch: u64, slot: u64) -> u64 {
-    slot / slots_per_epoch
-}
-
-/// Returns the sync committee period at a given `slot`.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md#compute_sync_committee_period_at_slot)
-pub fn compute_sync_committee_period_at_slot(
-    slots_per_epoch: u64,
-    epochs_per_sync_committee_period: u64,
-    slot: u64,
-) -> u64 {
-    compute_sync_committee_period(
-        epochs_per_sync_committee_period,
-        compute_epoch_at_slot(slots_per_epoch, slot),
-    )
-}
-
-/// Returns the sync committee period at a given `epoch`.
-///
-/// [See in consensus-spec](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/validator.md#sync-committee)
-pub fn compute_sync_committee_period(epochs_per_sync_committee_period: u64, epoch: u64) -> u64 {
-    epoch / epochs_per_sync_committee_period
-}
-
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_is_valid_ligth_client_header() {
-        // we are going to use the example from a light client header where
-        // the leaf is the light client execution root
-        // the branch is the light client execution branch
-        // the depth is floorlog2 of execution payload index
-        // the index is the subtree index of the execution payload index
-        // the root is the beacon body root
-    }
 }

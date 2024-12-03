@@ -105,6 +105,13 @@ pub enum EthereumIBCError {
 
     #[error("fast aggregate verify error: {0}")]
     FastAggregateVerify(String),
+
+    #[error("not enough signatures")]
+    NotEnoughSignatures,
+
+    //#[error("proof is invalid due to missing value: {v}", v = utils::hex::to_hex(value))]
+    #[error("verify storage proof error")]
+    TestVerifyStorageProof(#[source] ethereum_trie_db::error::TrieDBError),
 }
 
 #[derive(Debug, PartialEq, Clone, thiserror::Error)]

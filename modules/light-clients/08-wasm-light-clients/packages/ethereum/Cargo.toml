@@ -5,6 +5,9 @@ edition = { workspace = true }
 repository = { workspace = true }
 
 [dependencies]
+ethereum-trie-db = { workspace = true }
+utils = { workspace = true }
+
 alloy-primitives = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
