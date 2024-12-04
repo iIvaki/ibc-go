@@ -36,6 +36,7 @@ pub fn validate_merkle_branch(
             depth,
             index,
             root,
+            found: value,
         }))
     }
 }
@@ -54,7 +55,7 @@ mod test {
         trie::validate_merkle_branch,
         types::{
             light_client::{BeaconBlockHeader, ExecutionPayloadHeader, LightClientHeader},
-            wrappers::{MyBloom, MyBytes, MyExecutionPayloadBranch},
+            wrappers::{MyBloom, MyBranch, MyBytes},
         },
         verify::get_lc_execution_root,
     };
@@ -99,7 +100,7 @@ mod test {
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
             },
-            execution_branch: MyExecutionPayloadBranch([
+            execution_branch: MyBranch([
                 B256::from_hex("0xd320d2b395e1065b0b2e3dbb7843c6d77cb7830ef340ffc968caa0f92e26f080")
                     .unwrap(),
                 B256::from_hex("0x6c6dd63656639d153a2e86a9cab291e7a26e957ad635fec872d2836e92340c23")

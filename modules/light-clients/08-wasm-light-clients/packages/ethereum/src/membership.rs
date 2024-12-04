@@ -1,10 +1,12 @@
-use alloy_primitives::{keccak256, Keccak256, U256};
+use alloy_primitives::{keccak256, Bytes, Keccak256, U256};
 use alloy_rlp::encode_fixed_size;
-use alloy_rpc_types_eth::EIP1186StorageProof;
 use alloy_trie::{proof::verify_proof, Nibbles};
 use utils::hex::to_hex;
 
-use crate::{client_state::ClientState, consensus_state::ConsensusState, error::EthereumIBCError};
+use crate::{
+    client_state::ClientState, consensus_state::ConsensusState, error::EthereumIBCError,
+    types::storage_proof::StorageProof,
+};
 
 pub fn verify_membership(
     trusted_consensus_state: ConsensusState,
@@ -15,16 +17,19 @@ pub fn verify_membership(
 ) -> Result<(), EthereumIBCError> {
     let path = path.first().ok_or(EthereumIBCError::EmptyPath)?;
 
-    let eip1186_storage_proof: EIP1186StorageProof = serde_json::from_slice(proof.as_slice())
+    let storage_proof: StorageProof = serde_json::from_slice(proof.as_slice())
         .map_err(|_| EthereumIBCError::StorageProofDecode)?;
-    let key = eip1186_storage_proof.key.as_b256();
 
-    check_commitment_key(path.to_vec(), client_state.ibc_commitment_slot, key.into())?;
+    check_commitment_key(
+        path.to_vec(),
+        client_state.ibc_commitment_slot,
+        storage_proof.key.into(),
+    )?;
 
     let mut value = raw_value.clone();
     if let Some(raw_value) = raw_value {
         // membership proof (otherwise non-membership proof)
-        let proof_value = eip1186_storage_proof.value.to_be_bytes_vec();
+        let proof_value = storage_proof.value.to_be_bytes_vec();
         if proof_value != raw_value {
             return Err(EthereumIBCError::StoredValueMistmatch(
                 to_hex(raw_value),
@@ -35,11 +40,13 @@ pub fn verify_membership(
         value = Some(encode_fixed_size(&U256::from_be_slice(&proof_value)).to_vec());
     }
 
-    verify_proof(
+    let proof: Vec<&Bytes> = storage_proof.proof.iter().map(|b| &b.0).collect();
+
+    verify_proof::<Vec<&Bytes>>(
         trusted_consensus_state.storage_root,
-        Nibbles::unpack(keccak256(key)),
+        Nibbles::unpack(keccak256(storage_proof.key)),
         value,
-        eip1186_storage_proof.proof.iter(),
+        proof,
     )
     .map_err(|err| EthereumIBCError::VerifyStorageProof(err.to_string()))
 }
@@ -76,17 +83,40 @@ fn ibc_commitment_key_v2(path: Vec<u8>, slot: U256) -> U256 {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
-    use crate::{client_state::ClientState, consensus_state::ConsensusState};
+    use crate::{
+        client_state::ClientState,
+        consensus_state::ConsensusState,
+        test::fixtures::{load_fixture, CommitmentProofFixture},
+        types::{storage_proof::StorageProof, wrappers::MyBytes},
+    };
     use alloy_primitives::{
         hex::{self, FromHex},
         Bytes, B256, U256,
     };
-    use alloy_rpc_types_eth::EIP1186StorageProof;
     use utils::hex::FromBeHex;
 
     use super::verify_membership;
+
+    #[test]
+    fn test_with_fixture() {
+        let commitment_proof_fixture: CommitmentProofFixture =
+            load_fixture("commitment_proof_fixture");
+
+        let trusted_consensus_state = commitment_proof_fixture.consensus_state;
+        let client_state = commitment_proof_fixture.client_state;
+        let storage_proof = commitment_proof_fixture.storage_proof;
+        let path = commitment_proof_fixture.path;
+        let value = storage_proof.value.to_be_bytes_vec();
+
+        verify_membership(
+            trusted_consensus_state,
+            client_state,
+            serde_json::to_vec(&storage_proof).unwrap(),
+            vec![path],
+            Some(value),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn test_verify_membership() {
@@ -105,21 +135,20 @@ mod test {
             ..Default::default()
         };
 
-        let key = alloy_serde::storage::JsonStorageKey::from_str(
-            "0x75d7411cb01daad167713b5a9b7219670f0e500653cbbcd45cfe1bfe04222459",
-        )
-        .unwrap();
+        let key =
+            B256::from_hex("0x75d7411cb01daad167713b5a9b7219670f0e500653cbbcd45cfe1bfe04222459")
+                .unwrap();
         let value =
             U256::from_be_hex("0xb2ae8ab0be3bda2f81dc166497902a1832fea11b886bc7a0980dec7a219582db");
 
         let proof = vec![
-            Bytes::from_hex("0xf8718080a0911797c4b8cdbd1d8fa643b31ff0a469fae0f9b2ecbb0fa45a5ebe497f5e7130a065ea7eb6ae4e9747a131961beda4e9fd3040521e58845f4a286fb472eb0415168080a057b16d9a3bbb2d106b4d1b12dca3504f61899c7c660b036848511426ed342dd680808080808080808080").unwrap(),
-            Bytes::from_hex("0xf843a03d3c3bcf030006afea2a677a6ff5bf3f7f111e87461c8848cf062a5756d1a888a1a0b2ae8ab0be3bda2f81dc166497902a1832fea11b886bc7a0980dec7a219582db").unwrap(),
+            MyBytes(Bytes::from_hex("0xf8718080a0911797c4b8cdbd1d8fa643b31ff0a469fae0f9b2ecbb0fa45a5ebe497f5e7130a065ea7eb6ae4e9747a131961beda4e9fd3040521e58845f4a286fb472eb0415168080a057b16d9a3bbb2d106b4d1b12dca3504f61899c7c660b036848511426ed342dd680808080808080808080").unwrap()),
+            MyBytes(Bytes::from_hex("0xf843a03d3c3bcf030006afea2a677a6ff5bf3f7f111e87461c8848cf062a5756d1a888a1a0b2ae8ab0be3bda2f81dc166497902a1832fea11b886bc7a0980dec7a219582db").unwrap()),
         ];
 
         let path = vec![hex::decode("0x30372d74656e6465726d696e742d30010000000000000001").unwrap()];
 
-        let storage_proof = EIP1186StorageProof {
+        let storage_proof = StorageProof {
             key,
             value,
             proof: proof.clone(),
@@ -137,7 +166,7 @@ mod test {
 
         // should fail as a non-membership proof
         let value = U256::from(0);
-        let storage_proof = EIP1186StorageProof { key, value, proof };
+        let storage_proof = StorageProof { key, value, proof };
         let storage_proof_bz = serde_json::to_vec(&storage_proof).unwrap();
 
         verify_membership(consensus_state, client_state, storage_proof_bz, path, None).unwrap_err();
@@ -160,19 +189,18 @@ mod test {
             ..Default::default()
         };
 
-        let key = alloy_serde::storage::JsonStorageKey::from_str(
-            "0x7a0c5ed5d5cb00ab03f4363e63deb3b05017026890db9f2110e931630567bf93",
-        )
-        .unwrap();
+        let key =
+            B256::from_hex("0x7a0c5ed5d5cb00ab03f4363e63deb3b05017026890db9f2110e931630567bf93")
+                .unwrap();
 
         let proof = vec![
-            Bytes::from_hex("0xf838a120290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5639594eb9407e2a087056b69d43d21df69b82e31533c8a").unwrap(),
+            MyBytes(Bytes::from_hex("0xf838a120290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5639594eb9407e2a087056b69d43d21df69b82e31533c8a").unwrap()),
         ];
 
         let path = vec![hex::decode("0x30372d74656e6465726d696e742d30020000000000000001").unwrap()];
 
         let value = U256::from(0);
-        let proof = EIP1186StorageProof { key, value, proof };
+        let proof = StorageProof { key, value, proof };
         let proof_bz = serde_json::to_vec(&proof).unwrap();
 
         verify_membership(

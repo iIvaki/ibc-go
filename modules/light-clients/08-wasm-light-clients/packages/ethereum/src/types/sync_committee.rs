@@ -12,6 +12,7 @@ use super::{
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct SyncCommittee {
     pub pubkeys: VecBlsPublicKey,
+    #[serde(with = "utils::base64::fixed_size")]
     pub aggregate_pubkey: BlsPublicKey,
 }
 
@@ -33,14 +34,29 @@ impl Default for ActiveSyncCommittee {
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct TrustedSyncCommittee {
     pub trusted_height: Height,
-    pub sync_committee: ActiveSyncCommittee,
+    pub current_sync_committee: Option<SyncCommittee>,
+    pub next_sync_committee: Option<SyncCommittee>,
+}
+
+impl TrustedSyncCommittee {
+    pub fn get_active_sync_committee(&self) -> ActiveSyncCommittee {
+        if let Some(sync_committee) = &self.current_sync_committee {
+            ActiveSyncCommittee::Current(sync_committee.clone())
+        } else if let Some(sync_committee) = &self.next_sync_committee {
+            ActiveSyncCommittee::Next(sync_committee.clone())
+        } else {
+            ActiveSyncCommittee::default()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct SyncAggregate {
     /// The bits representing the sync committee's participation.
+    #[serde(with = "utils::base64")]
     pub sync_committee_bits: Bytes, // TODO: Consider changing this to a BitVector
     /// The aggregated signature of the sync committee.
+    #[serde(with = "utils::base64::fixed_size")]
     pub sync_committee_signature: BlsSignature,
 }
 
@@ -83,4 +99,28 @@ pub fn compute_sync_committee_period_at_slot(
         epochs_per_sync_committee_period,
         compute_epoch_at_slot(slots_per_epoch, slot),
     )
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{test::fixtures::load_fixture, types::light_client::Header};
+    use alloy_primitives::{hex::FromHex, B256};
+    use tree_hash::TreeHash;
+
+    #[test]
+    fn test_sync_committee_tree_hash_root() {
+        let header: Header = load_fixture("client_update_ack_0");
+        assert_ne!(header, Header::default());
+        let sync_committee = header
+            .consensus_update
+            .next_sync_committee
+            .unwrap()
+            .tree_hash_root();
+
+        let expected =
+            B256::from_hex("0x5361eb179f7499edbf09e514d317002f1d365d72e14a56c931e9edaccca3ff29")
+                .unwrap();
+
+        assert_eq!(expected, sync_committee);
+    }
 }

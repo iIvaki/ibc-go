@@ -6,3 +6,5 @@ repository = { workspace = true }
 
 [dependencies]
 alloy-primitives = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }

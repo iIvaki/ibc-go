@@ -6,14 +6,16 @@ use crate::types::sync_committee::{ActiveSyncCommittee, SyncCommittee};
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct ConsensusState {
     pub slot: u64,
-    /// The state root for this chain, used for L2s to verify against this contract.
+    #[serde(with = "utils::base64::fixed_size")]
     pub state_root: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub storage_root: B256,
-    /// Timestamp of the block, *normalized to nanoseconds* in order to be compatible with ibc-go.
     pub timestamp: u64,
     /// aggregate public key of current sync committee
+    #[serde(with = "utils::base64::fixed_size")]
     pub current_sync_committee: FixedBytes<48>,
     /// aggregate public key of next sync committee
+    #[serde(with = "utils::base64::option_with_default")]
     pub next_sync_committee: Option<FixedBytes<48>>,
 }
 

@@ -7,7 +7,7 @@ use crate::config::consts::{floorlog2, EXECUTION_PAYLOAD_INDEX};
 use super::bls::BlsPublicKey;
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct Version(pub B32);
+pub struct Version(#[serde(with = "utils::base64::fixed_size")] pub B32);
 
 impl TreeHash for Version {
     fn tree_hash_type() -> tree_hash::TreeHashType {
@@ -28,7 +28,7 @@ impl TreeHash for Version {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyBytes(pub Bytes);
+pub struct MyBytes(#[serde(with = "utils::base64")] pub Bytes);
 
 impl TreeHash for MyBytes {
     fn tree_hash_type() -> tree_hash::TreeHashType {
@@ -56,8 +56,15 @@ impl TreeHash for MyBytes {
     }
 }
 
+impl AsRef<[u8]> for MyBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyBloom(pub Bloom);
+pub struct MyBloom(#[serde(with = "utils::base64::fixed_size")] pub Bloom);
+
 impl TreeHash for MyBloom {
     fn tree_hash_type() -> tree_hash::TreeHashType {
         tree_hash::TreeHashType::List
@@ -84,10 +91,12 @@ impl TreeHash for MyBloom {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct MyExecutionPayloadBranch(pub [B256; floorlog2(EXECUTION_PAYLOAD_INDEX)]);
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub struct MyBranch<const N: usize>(
+    #[serde(with = "utils::base64::fixed_size::vec::fixed_size")] pub [B256; N],
+);
 
-impl TreeHash for MyExecutionPayloadBranch {
+impl<const N: usize> TreeHash for MyBranch<N> {
     fn tree_hash_type() -> tree_hash::TreeHashType {
         tree_hash::TreeHashType::List
     }
@@ -112,8 +121,20 @@ impl TreeHash for MyExecutionPayloadBranch {
     }
 }
 
+impl<const N: usize> Default for MyBranch<N> {
+    fn default() -> Self {
+        Self([B256::default(); N])
+    }
+}
+
+impl<const N: usize> From<MyBranch<N>> for Vec<B256> {
+    fn from(val: MyBranch<N>) -> Self {
+        val.0.to_vec()
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
-pub struct VecBlsPublicKey(pub Vec<BlsPublicKey>);
+pub struct VecBlsPublicKey(#[serde(with = "utils::base64::fixed_size::vec")] pub Vec<BlsPublicKey>);
 
 impl TreeHash for VecBlsPublicKey {
     fn tree_hash_type() -> tree_hash::TreeHashType {
@@ -129,13 +150,34 @@ impl TreeHash for VecBlsPublicKey {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        let leaves = (self.0.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
+        let leaves = self.0.len();
         let mut hasher = MerkleHasher::with_leaves(leaves);
 
         for item in &self.0 {
-            hasher.write(item.tree_hash_root()[..1].as_ref()).unwrap()
+            hasher.write(item.tree_hash_root().as_ref()).unwrap()
         }
 
         hasher.finish().unwrap()
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
+pub struct MyBlsPublicKey(#[serde(with = "utils::base64::fixed_size")] pub BlsPublicKey);
+
+impl TreeHash for MyBlsPublicKey {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        FixedBytes::tree_hash_type()
+    }
+
+    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
+        self.0.tree_hash_packed_encoding()
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        FixedBytes::tree_hash_packing_factor()
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        self.0.tree_hash_root()
     }
 }

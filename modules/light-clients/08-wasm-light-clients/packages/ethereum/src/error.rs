@@ -109,15 +109,17 @@ pub enum EthereumIBCError {
     #[error("not enough signatures")]
     NotEnoughSignatures,
 
-    //#[error("proof is invalid due to missing value: {v}", v = utils::hex::to_hex(value))]
-    #[error("verify storage proof error")]
-    TestVerifyStorageProof(#[source] ethereum_trie_db::error::TrieDBError),
+    #[error("failed to verify finalized_header is finalized")]
+    ValidateFinalizedHeaderFailed(#[source] Box<EthereumIBCError>),
+
+    #[error("failed to verify next sync committee against attested header")]
+    ValidateNextSyncCommitteeFailed(#[source] Box<EthereumIBCError>),
 }
 
 #[derive(Debug, PartialEq, Clone, thiserror::Error)]
 #[error("invalid merkle branch \
     (leaf: {leaf}, branch: [{branch}], \
-    depth: {depth}, index: {index}, root: {root})",
+    depth: {depth}, index: {index}, root: {root}, found: {found})",
     branch = .branch.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 )]
 pub struct InvalidMerkleBranch {
@@ -126,4 +128,5 @@ pub struct InvalidMerkleBranch {
     pub depth: usize,
     pub index: u64,
     pub root: B256,
+    pub found: B256,
 }

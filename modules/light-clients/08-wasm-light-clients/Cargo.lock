@@ -311,6 +311,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "amcl"
+version = "0.3.0"
+source = "git+https://github.com/Snowfork/milagro_bls?rev=bc2b5b5e8d48b7e2e1bfaa56dc2d93e13cb32095#bc2b5b5e8d48b7e2e1bfaa56dc2d93e13cb32095"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1190,11 +1195,14 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-trie 0.5.3",
+ "base64",
  "ethereum-trie-db",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "milagro_bls",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2",
  "thiserror 2.0.3",
  "tree_hash",
@@ -1709,6 +1717,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "808b50db46293432a45e63bc15ea51e0ab4c0a1647b8eb114e31a3e698dd6fbe"
 dependencies = [
  "hash-db",
+]
+
+[[package]]
+name = "milagro_bls"
+version = "1.5.0"
+source = "git+https://github.com/Snowfork/milagro_bls?rev=bc2b5b5e8d48b7e2e1bfaa56dc2d93e13cb32095#bc2b5b5e8d48b7e2e1bfaa56dc2d93e13cb32095"
+dependencies = [
+ "amcl",
+ "rand",
+ "zeroize",
 ]
 
 [[package]]
@@ -2802,6 +2820,8 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "base64",
+ "serde",
 ]
 
 [[package]]

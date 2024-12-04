@@ -45,6 +45,8 @@ tree_hash = "0.8" # Maintained by Sigma Prime for use in Lighthouse (and the bro
 tree_hash_derive = "0.8" # Maintained by Sigma Prime for use in Lighthouse (and the broader Ethereum ecosystem)
 sha2 = { version = "0.10", default-features = false }
 sha3 = { version = "0.8", default-features = false }
+base64 = { version = "0.22", default-features = false }
+serde_with = { version = "3.11", default-features = false, features = ["alloc"] }
 
 trie-db = "0.29" # Maintined by Parity Tech
 hash-db = "0.16" # Maintined by Parity Tech
@@ -66,5 +68,7 @@ prost = { version = "0.13", default-features = false, features = ["prost-derive"
 
 # dev-dependencies
 cw-multi-test = "2.2.0"
+milagro_bls = { git = "https://github.com/Snowfork/milagro_bls", rev = "bc2b5b5e8d48b7e2e1bfaa56dc2d93e13cb32095", default-features = false } # Only used for testing, not to be used in production!
+
 
 

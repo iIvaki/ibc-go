@@ -6,7 +6,7 @@ use utils::{ensure::ensure, hex::to_hex};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum UnionCustomQuery {
+pub enum EthereumCustomQuery {
     AggregateVerify {
         public_keys: Vec<Binary>,
         message: Binary,
@@ -17,10 +17,10 @@ pub enum UnionCustomQuery {
     },
 }
 
-impl CustomQuery for UnionCustomQuery {}
+impl CustomQuery for EthereumCustomQuery {}
 
 pub struct BlsVerifier<'a> {
-    pub deps: Deps<'a, UnionCustomQuery>,
+    pub deps: Deps<'a, EthereumCustomQuery>,
 }
 
 #[derive(Debug, PartialEq, thiserror::Error, Clone)]
@@ -55,8 +55,8 @@ impl<'a> BlsVerify for BlsVerifier<'a> {
             .map(|p| Binary::from(p.to_vec()))
             .collect();
 
-        let request: QueryRequest<UnionCustomQuery> =
-            QueryRequest::Custom(UnionCustomQuery::AggregateVerify {
+        let request: QueryRequest<EthereumCustomQuery> =
+            QueryRequest::Custom(EthereumCustomQuery::AggregateVerify {
                 public_keys: binary_public_keys,
                 message: Binary::from(msg.to_vec()),
                 signature: Binary::from(signature.to_vec()),

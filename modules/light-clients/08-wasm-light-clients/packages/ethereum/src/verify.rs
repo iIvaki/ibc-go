@@ -33,10 +33,9 @@ pub fn verify_header<V: BlsVerify>(
     header: &Header,
     bls_verifier: V,
 ) -> Result<(), EthereumIBCError> {
-    let trusted_sync_committee = header.trusted_sync_committee.clone();
     let trusted_consensus_state = TrustedConsensusState {
         state: consensus_state.clone(),
-        sync_committee: trusted_sync_committee.sync_committee,
+        sync_committee: header.trusted_sync_committee.get_active_sync_committee(),
     };
 
     // Ethereum consensus-spec says that we should use the slot at the current timestamp.
@@ -72,7 +71,7 @@ pub fn verify_header<V: BlsVerify>(
         &proof_data.proof,
         proof_data.storage_root,
     )
-    .map_err(EthereumIBCError::TestVerifyStorageProof)
+    .map_err(|err| EthereumIBCError::VerifyStorageProof(err.to_string()))
 }
 
 // TODO: Update comments
@@ -215,11 +214,12 @@ pub fn validate_light_client_update<V: BlsVerify>(
     // This confirms that the `finalized_header` is really finalized.
     validate_merkle_branch(
         finalized_root,
-        update.finality_branch.into(),
+        update.finality_branch.clone().into(),
         floorlog2(FINALIZED_ROOT_INDEX),
         get_subtree_index(FINALIZED_ROOT_INDEX),
         update.attested_header.beacon.state_root,
-    )?;
+    )
+    .map_err(|e| EthereumIBCError::ValidateFinalizedHeaderFailed(Box::new(e)))?;
 
     // Verify that if the update contains the next sync committee, and the signature periods do match,
     // next sync committees match too.
@@ -239,11 +239,16 @@ pub fn validate_light_client_update<V: BlsVerify>(
         // This validates the given next sync committee against the attested header's state root.
         validate_merkle_branch(
             next_sync_committee.tree_hash_root(),
-            update.next_sync_committee_branch.unwrap_or_default().into(),
+            update
+                .next_sync_committee_branch
+                .clone()
+                .unwrap_or_default()
+                .into(),
             floorlog2(NEXT_SYNC_COMMITTEE_INDEX),
             get_subtree_index(NEXT_SYNC_COMMITTEE_INDEX),
             update.attested_header.beacon.state_root,
-        )?;
+        )
+        .map_err(|e| EthereumIBCError::ValidateNextSyncCommitteeFailed(Box::new(e)))?;
     }
 
     // Verify sync committee aggregate signature
@@ -333,4 +338,34 @@ pub fn get_lc_execution_root(client_state: &ClientState, header: &LightClientHea
     .unwrap();
 
     header.execution.tree_hash_root()
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test::{bls_verifier::TestBlsVerifier, fixtures::load_fixture};
+
+    use super::*;
+
+    #[test]
+    fn test_verify_header() {
+        let bls_verifier = TestBlsVerifier;
+
+        let client_state: ClientState = load_fixture("initial_client_state_fixture");
+        assert_ne!(client_state, ClientState::default());
+
+        let consensus_state: ConsensusState = load_fixture("initial_consensus_state_fixture");
+        assert_ne!(consensus_state, ConsensusState::default());
+
+        let header: Header = load_fixture("client_update_ack_0");
+        assert_ne!(header, Header::default());
+
+        verify_header(
+            &consensus_state,
+            &client_state,
+            header.consensus_update.attested_header.execution.timestamp + 1000,
+            &header,
+            bls_verifier,
+        )
+        .unwrap();
+    }
 }

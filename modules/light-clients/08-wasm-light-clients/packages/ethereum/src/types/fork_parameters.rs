@@ -5,6 +5,7 @@ use super::{fork::Fork, wrappers::Version};
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct ForkParameters {
     pub genesis_fork_version: Version,
+    #[serde(default)] // TODO: REMOVE AND FIX IN E2E
     pub genesis_slot: u64,
     pub altair: Fork,
     pub bellatrix: Fork,

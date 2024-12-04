@@ -1,16 +1,19 @@
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 use tree_hash_derive::TreeHash;
 
-use crate::config::consts::{floorlog2, FINALIZED_ROOT_INDEX, NEXT_SYNC_COMMITTEE_INDEX};
+use crate::config::consts::{
+    floorlog2, EXECUTION_PAYLOAD_INDEX, FINALIZED_ROOT_INDEX, NEXT_SYNC_COMMITTEE_INDEX,
+};
 
 use super::{
     sync_committee::{SyncAggregate, SyncCommittee, TrustedSyncCommittee},
-    wrappers::{MyBloom, MyBytes, MyExecutionPayloadBranch},
+    wrappers::{MyBloom, MyBranch, MyBytes},
 };
 
-pub type NextSyncCommitteeBranch = [B256; floorlog2(NEXT_SYNC_COMMITTEE_INDEX)];
-pub type FinalityBranch = [B256; floorlog2(FINALIZED_ROOT_INDEX)];
+const EXECUTION_BRANCH_SIZE: usize = floorlog2(EXECUTION_PAYLOAD_INDEX);
+const NEXT_SYNC_COMMITTEE_BRANCH_SIZE: usize = floorlog2(NEXT_SYNC_COMMITTEE_INDEX);
+const FINALITY_BRANCH_SIZE: usize = floorlog2(FINALIZED_ROOT_INDEX);
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct Header {
@@ -28,11 +31,10 @@ pub struct LightClientUpdate {
     // TODO: Remove the Option and improve ethereum::header::Header to be an enum, instead of using optional fields and bools.
     #[serde(default)]
     pub next_sync_committee: Option<SyncCommittee>,
-    #[serde(default)]
-    pub next_sync_committee_branch: Option<NextSyncCommitteeBranch>,
+    pub next_sync_committee_branch: Option<MyBranch<NEXT_SYNC_COMMITTEE_BRANCH_SIZE>>,
     /// Finalized header corresponding to `attested_header.state_root`
     pub finalized_header: LightClientHeader,
-    pub finality_branch: FinalityBranch,
+    pub finality_branch: MyBranch<FINALITY_BRANCH_SIZE>,
     /// Sync committee aggregate signature
     pub sync_aggregate: SyncAggregate,
     /// Slot at which the aggregate signature was created (untrusted)
@@ -46,45 +48,61 @@ pub struct AccountUpdate {
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default)]
 pub struct AccountProof {
+    #[serde(with = "utils::base64::fixed_size")]
     pub storage_root: B256,
-    pub proof: Vec<Bytes>,
+    pub proof: Vec<MyBytes>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct LightClientHeader {
     pub beacon: BeaconBlockHeader,
     pub execution: ExecutionPayloadHeader,
-    pub execution_branch: MyExecutionPayloadBranch,
+    pub execution_branch: MyBranch<EXECUTION_BRANCH_SIZE>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct BeaconBlockHeader {
     pub slot: u64,
     pub proposer_index: u64,
+    #[serde(with = "utils::base64::fixed_size")]
     pub parent_root: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub state_root: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub body_root: B256,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Default, TreeHash)]
 pub struct ExecutionPayloadHeader {
+    #[serde(with = "utils::base64::fixed_size")]
     pub parent_hash: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub fee_recipient: Address,
+    #[serde(with = "utils::base64::fixed_size")]
     pub state_root: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub receipts_root: B256,
     pub logs_bloom: MyBloom,
+    #[serde(with = "utils::base64::fixed_size")]
     pub prev_randao: B256,
     pub block_number: u64,
     pub gas_limit: u64,
+    #[serde(default)]
     pub gas_used: u64,
     pub timestamp: u64,
     pub extra_data: MyBytes,
+    #[serde(with = "utils::base64::uint256")]
     pub base_fee_per_gas: U256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub block_hash: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub transactions_root: B256,
+    #[serde(with = "utils::base64::fixed_size")]
     pub withdrawals_root: B256,
     // new in Deneb
+    #[serde(default)]
     pub blob_gas_used: u64,
     // new in Deneb
+    #[serde(default)]
     pub excess_blob_gas: u64,
 }

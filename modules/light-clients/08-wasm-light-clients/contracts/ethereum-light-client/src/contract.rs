@@ -196,6 +196,7 @@ mod tests {
                 latest_slot: 42,
                 ibc_commitment_slot: U256::from(0),
                 ibc_contract_address: Default::default(),
+                frozen_height: ethereum::types::height::Height::default(),
             };
             let client_state_bz: Vec<u8> = client_state.clone().into();
 
