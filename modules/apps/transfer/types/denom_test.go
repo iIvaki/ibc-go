@@ -316,6 +316,11 @@ func TestExtractDenomFromPath(t *testing.T) {
 		{"ibc denom one hop with client id", "transfer/07-tendermint-0/atom", types.NewDenom("atom", types.NewHop("transfer", "07-tendermint-0"))},
 		{"ibc denom one hop trailing slash", "transfer/channel-0/atom/", types.NewDenom("atom/", types.NewHop("transfer", "channel-0"))},
 		{"ibc denom one hop multiple slashes", "transfer/channel-0//at/om/", types.NewDenom("/at/om/", types.NewHop("transfer", "channel-0"))},
+		{"ibc denom one hop multiple slashes", "transfer/channel-0/at/om-3", types.NewDenom("at/om-3", types.NewHop("transfer", "channel-0"))},
+		{"ibc denom one hop multiple slashes with client-id", "transfer/07-tendermint-0//at/om/", types.NewDenom("/at/om/", types.NewHop("transfer", "07-tendermint-0"))},
+		{"ibc denom one hop three slashes with client-id", "transfer/07-tendermint-0/at/om/zone", types.NewDenom("at/om/zone", types.NewHop("transfer", "07-tendermint-0"))},
+		{"ibc denom one hop three slashes with client-id and -N in the last part of the denom", "transfer/07-tendermint-0/at/om/zone-3", types.NewDenom("at/om/zone-3", types.NewHop("transfer", "07-tendermint-0"))},
+		{"ibc denom one hop three slashes with client-id in denom at the end", "transfer/07-tendermint-0/at/om/07-tendermint-0", types.NewDenom("at/om/07-tendermint-0", types.NewHop("transfer", "07-tendermint-0"))},
 		{"ibc denom two hops", "transfer/channel-0/transfer/channel-60/atom", types.NewDenom("atom", types.NewHop("transfer", "channel-0"), types.NewHop("transfer", "channel-60"))},
 		{"ibc denom two hops trailing slash", "transfer/channel-0/transfer/channel-60/atom/", types.NewDenom("atom/", types.NewHop("transfer", "channel-0"), types.NewHop("transfer", "channel-60"))},
 		{"empty prefix", "/uatom", types.NewDenom("/uatom")},
@@ -326,7 +331,7 @@ func TestExtractDenomFromPath(t *testing.T) {
 		{"trace info with custom port", "customtransfer/channel-1/uatom", types.NewDenom("uatom", types.NewHop("customtransfer", "channel-1"))},
 		{"invalid path (1)", "channel-1/transfer/uatom", types.NewDenom("channel-1/transfer/uatom")},
 		{"invalid path (2)", "transfer/channel-1", types.NewDenom("transfer/channel-1")},
-		{"invalid path (3)", "transfer/channel-1/transfer/channel-2", types.NewDenom("", types.NewHop("transfer", "channel-1"), types.NewHop("transfer", "channel-2"))},
+		{"invalid path (3)", "transfer/channel-1/transfer/channel-2", types.NewDenom("transfer/channel-2", types.NewHop("transfer", "channel-1"))},
 		{"invalid path (4)", "transfer/channelToA/uatom", types.NewDenom("transfer/channelToA/uatom")},
 	}
 

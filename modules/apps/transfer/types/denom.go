@@ -168,7 +168,7 @@ func ExtractDenomFromPath(fullPath string) Denom {
 		// will be incorrectly parsed, but the token will continue to be treated correctly
 		// as an IBC denomination. The hash used to store the token internally on our chain
 		// will be the same value as the base denomination being correctly parsed.
-		if i < length-1 && length > 2 && (channeltypes.IsValidChannelID(denomSplit[i+1]) || clienttypes.IsValidClientID(denomSplit[i+1])) {
+		if i < length-1 && length-i > 2 && (channeltypes.IsValidChannelID(denomSplit[i+1]) || clienttypes.IsValidClientID(denomSplit[i+1])) {
 			trace = append(trace, NewHop(denomSplit[i], denomSplit[i+1]))
 		} else {
 			baseDenomSlice = denomSplit[i:]
